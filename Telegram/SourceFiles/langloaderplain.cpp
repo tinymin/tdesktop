@@ -12,58 +12,19 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
-#include "stdafx.h"
 #include "langloaderplain.h"
 
-namespace {
-
-	bool skipWhitespaces(const char *&from, const char *end) {
-		while (from < end && (*from == ' ' || *from == '\n' || *from == '\t' || *from == '\r')) {
-			++from;
-		}
-		return (from < end);
-	}
-
-	bool skipComment(const char *&from, const char *end) {
-		if (from >= end) return false;
-		if (*from == '/') {
-			if (from + 1 >= end) return true;
-			if (*(from + 1) == '*') {
-				from += 2;
-				while (from + 1 < end && (*from != '*' || *(from + 1) != '/')) {
-					++from;
-				}
-				from += 2;
-				return (from < end);
-			} else if (*(from + 1) == '/') {
-				from += 2;
-				while (from < end && *from != '\n' && *from != '\r') {
-					++from;
-				}
-				return (from < end);
-			} else {
-				return true;
-			}
-		}
-		return true;
-	}
-
-	bool skipJunk(const char *&from, const char *end) {
-		const char *start;
-		do {
-			start = from;
-			if (!skipWhitespaces(from, end)) return false;
-            if (!skipComment(from, end)) throw Exception("Unexpected end of comment!");
-		} while (start != from);
-		return true;
-	}
-}
+#include "core/parse_helper.h"
 
 bool LangLoaderPlain::readKeyValue(const char *&from, const char *end) {
-	if (!skipJunk(from, end)) return false;
+	using base::parse::skipWhitespaces;
+	if (!skipWhitespaces(from, end)) return false;
 
 	if (*from != '"') throw Exception(QString("Expected quote before key name!"));
 	++from;
@@ -74,13 +35,13 @@ bool LangLoaderPlain::readKeyValue(const char *&from, const char *end) {
 
 	QByteArray varName = QByteArray(nameStart, from - nameStart);
 
-	if (*from != '"') throw Exception(QString("Expected quote after key name '%1'!").arg(QLatin1String(varName)));
+	if (from == end || *from != '"') throw Exception(QString("Expected quote after key name '%1'!").arg(QLatin1String(varName)));
 	++from;
 
-	if (!skipJunk(from, end)) throw Exception(QString("Unexpected end of file in key '%1'!").arg(QLatin1String(varName)));
+	if (!skipWhitespaces(from, end)) throw Exception(QString("Unexpected end of file in key '%1'!").arg(QLatin1String(varName)));
 	if (*from != '=') throw Exception(QString("'=' expected in key '%1'!").arg(QLatin1String(varName)));
 
-	if (!skipJunk(++from, end)) throw Exception(QString("Unexpected end of file in key '%1'!").arg(QLatin1String(varName)));
+	if (!skipWhitespaces(++from, end)) throw Exception(QString("Unexpected end of file in key '%1'!").arg(QLatin1String(varName)));
 	if (*from != '"') throw Exception(QString("Expected string after '=' in key '%1'!").arg(QLatin1String(varName)));
 
 	LangKey varKey = keyIndex(varName);
@@ -120,7 +81,11 @@ bool LangLoaderPlain::readKeyValue(const char *&from, const char *end) {
 			while (from < end && ((*from >= 'a' && *from <= 'z') || (*from >= 'A' && *from <= 'Z') || *from == '_' || (*from >= '0' && *from <= '9'))) {
 				++from;
 			}
-			if (from == tagStart) throw Exception(QString("Expected tag name in key '%1'!").arg(QLatin1String(varName)));
+			if (from == tagStart) {
+				readingValue = false;
+				warning(QString("Expected tag name in key '%1'!").arg(QLatin1String(varName)));
+				continue;
+			}
 			QByteArray tagName = QByteArray(tagStart, int(from - tagStart));
 
 			if (from == end || (*from != '}' && *from != ':')) throw Exception(QString("Expected '}' or ':' after tag name in key '%1'!").arg(QLatin1String(varName)));
@@ -144,7 +109,7 @@ bool LangLoaderPlain::readKeyValue(const char *&from, const char *end) {
 			tagReplacer[1] = TextCommandLangTag;
 			tagReplacer[2] = QChar(0x0020 + index);
 			varValue.append(tagReplacer.toUtf8());
-			
+
 			if (*from == ':') {
 				start = ++from;
 
@@ -224,10 +189,10 @@ bool LangLoaderPlain::readKeyValue(const char *&from, const char *end) {
 	if (from >= end) throw Exception(QString("Unexpected end of file in key '%1'!").arg(QLatin1String(varName)));
 	if (readingValue && from > start) varValue.append(start, from - start);
 
-	if (!skipJunk(++from, end)) throw Exception(QString("Unexpected end of file in key '%1'!").arg(QLatin1String(varName)));
+	if (!skipWhitespaces(++from, end)) throw Exception(QString("Unexpected end of file in key '%1'!").arg(QLatin1String(varName)));
 	if (*from != ';') throw Exception(QString("';' expected after \"value\" in key '%1'!").arg(QLatin1String(varName)));
 
-	skipJunk(++from, end);
+	skipWhitespaces(++from, end);
 
 	if (readingValue) {
 		if (feedingValue) {
@@ -292,14 +257,16 @@ LangLoaderPlain::LangLoaderPlain(const QString &file, const LangLoaderRequest &r
 		}
 	}
 
-	const char *text = data.constData() + skip, *end = text + data.size() - skip;
+	data = base::parse::stripComments(data);
+
+	auto text = data.constData() + skip, end = text + data.size() - skip;
 	try {
-		while (true) {
+		while (text != end) {
 			if (!readKeyValue(text, end)) {
 				break;
 			}
 		}
-	} catch (exception &e) {
+	} catch (std::exception &e) {
 		error(QString::fromUtf8(e.what()));
 		return;
 	}

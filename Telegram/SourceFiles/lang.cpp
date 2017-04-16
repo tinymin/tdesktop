@@ -12,16 +12,15 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
-*/
-#include "stdafx.h"
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
 
+Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+*/
 #include "lang.h"
 
-Qt::LayoutDirection langDir() { // current lang dependent
-	return Qt::LeftToRight;
-}
+#include "langloaderplain.h"
 
 LangString langCounted(ushort key0, ushort tag, float64 value) { // current lang dependent
 	int v = qFloor(value);
@@ -45,6 +44,43 @@ LangString langCounted(ushort key0, ushort tag, float64 value) { // current lang
 	}
 	return lang(LangKey(key0)).tag(tag, sv);
 }
+
+//#define NEW_VER_TAG lt_link
+//#define NEW_VER_TAG_VALUE "https://telegram.org/blog/desktop-1-0"
+
+QString langNewVersionText() {
+#ifdef NEW_VER_TAG
+	return lng_new_version_text(NEW_VER_TAG, QString::fromUtf8(NEW_VER_TAG_VALUE));
+#else // NEW_VER_TAG
+	return lang(lng_new_version_text);
+#endif // NEW_VER_TAG
+}
+
+#ifdef NEW_VER_TAG
+#define NEW_VER_KEY lng_new_version_text__tagged
+#define NEW_VER_POSTFIX .tag(NEW_VER_TAG, QString::fromUtf8(NEW_VER_TAG_VALUE))
+#else // NEW_VER_TAG
+#define NEW_VER_KEY lng_new_version_text
+#define NEW_VER_POSTFIX
+#endif // NEW_VER_TAG
+
+QString langNewVersionTextForLang(int langId) {
+	LangLoaderResult result;
+	if (langId) {
+		LangLoaderPlain loader(qsl(":/langs/lang_") + LanguageCodes[langId].c_str() + qsl(".strings"), langLoaderRequest(lng_language_name, NEW_VER_KEY));
+		result = loader.found();
+	} else {
+		result.insert(lng_language_name, langOriginal(lng_language_name));
+		result.insert(NEW_VER_KEY, langOriginal(NEW_VER_KEY));
+	}
+	return result.value(lng_language_name, LanguageCodes[langId].c_str() + qsl(" language")) + qsl(":\n\n") + LangString(result.value(NEW_VER_KEY, qsl("--none--")))NEW_VER_POSTFIX;
+}
+
+#undef NEW_VER_POSTFIX
+#undef NEW_VER_KEY
+
+#undef NEW_VER_TAG_VALUE
+#undef NEW_VER_TAG
 
 const QString &LangLoader::errors() const {
 	if (_errors.isEmpty() && !_err.isEmpty()) {
@@ -75,25 +111,29 @@ void LangLoader::foundKeyValue(LangKey key) {
 }
 
 QString Translator::translate(const char *context, const char *sourceText, const char *disambiguation, int n) const {
-	if (QLatin1String("QMenuBar") == context) {
-		if (QLatin1String("Services") == sourceText) return lang(lng_mac_menu_services);
-		if (QLatin1String("Hide %1") == sourceText) return lng_mac_menu_hide_telegram(lt_telegram, qsl("%1"));
-		if (QLatin1String("Hide Others") == sourceText) return lang(lng_mac_menu_hide_others);
-		if (QLatin1String("Show All") == sourceText) return lang(lng_mac_menu_show_all);
-		if (QLatin1String("Preferences...") == sourceText) return lang(lng_mac_menu_preferences);
-		if (QLatin1String("Quit %1") == sourceText) return lng_mac_menu_quit_telegram(lt_telegram, qsl("%1"));
-		if (QLatin1String("About %1") == sourceText) return lng_mac_menu_about_telegram(lt_telegram, qsl("%1"));
+	if (qstr("QMenuBar") == context) {
+		if (qstr("Services") == sourceText) return lang(lng_mac_menu_services);
+		if (qstr("Hide %1") == sourceText) return lng_mac_menu_hide_telegram(lt_telegram, qsl("%1"));
+		if (qstr("Hide Others") == sourceText) return lang(lng_mac_menu_hide_others);
+		if (qstr("Show All") == sourceText) return lang(lng_mac_menu_show_all);
+		if (qstr("Preferences...") == sourceText) return lang(lng_mac_menu_preferences);
+		if (qstr("Quit %1") == sourceText) return lng_mac_menu_quit_telegram(lt_telegram, qsl("%1"));
+		if (qstr("About %1") == sourceText) return lng_mac_menu_about_telegram(lt_telegram, qsl("%1"));
 		return QString();
 	}
-	if (QLatin1String("QWidgetTextControl") == context || QLatin1String("QLineEdit") == context) {
-		if (QLatin1String("&Undo") == sourceText) return lang(lng_mac_menu_undo);
-		if (QLatin1String("&Redo") == sourceText) return lang(lng_mac_menu_redo);
-		if (QLatin1String("Cu&t") == sourceText) return lang(lng_mac_menu_cut);
-		if (QLatin1String("&Copy") == sourceText) return lang(lng_mac_menu_copy);
-		if (QLatin1String("&Paste") == sourceText) return lang(lng_mac_menu_paste);
-		if (QLatin1String("Delete") == sourceText) return lang(lng_mac_menu_delete);
-		if (QLatin1String("Select All") == sourceText) return lang(lng_mac_menu_select_all);
+	if (qstr("QWidgetTextControl") == context || qstr("QLineEdit") == context) {
+		if (qstr("&Undo") == sourceText) return lang((cPlatform() == dbipWindows) ? lng_wnd_menu_undo : ((cPlatform() == dbipMac || cPlatform() == dbipMacOld) ? lng_mac_menu_undo : lng_linux_menu_undo));
+		if (qstr("&Redo") == sourceText) return lang((cPlatform() == dbipWindows) ? lng_wnd_menu_redo : ((cPlatform() == dbipMac || cPlatform() == dbipMacOld) ? lng_mac_menu_redo : lng_linux_menu_redo));
+		if (qstr("Cu&t") == sourceText) return lang(lng_mac_menu_cut);
+		if (qstr("&Copy") == sourceText) return lang(lng_mac_menu_copy);
+		if (qstr("&Paste") == sourceText) return lang(lng_mac_menu_paste);
+		if (qstr("Delete") == sourceText) return lang(lng_mac_menu_delete);
+		if (qstr("Select All") == sourceText) return lang(lng_mac_menu_select_all);
 		return QString();
 	}
-	return QString();//QString::fromUtf8(sourceText);
+	if (qstr("QUnicodeControlCharacterMenu") == context) {
+		if (qstr("Insert Unicode control character") == sourceText) return lang(lng_menu_insert_unicode);
+		return QString();
+	}
+	return QString();
 }

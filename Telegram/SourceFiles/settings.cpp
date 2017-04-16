@@ -12,13 +12,26 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
-#include "stdafx.h"
-#include "pspecific.h"
 #include "settings.h"
+
+#include "platform/platform_specific.h"
 #include "lang.h"
+
+bool gRtl = false;
+Qt::LayoutDirection gLangDir = gRtl ? Qt::RightToLeft : Qt::LeftToRight;
+
+QString gArguments;
+
+bool gAlphaVersion = AppAlphaVersion;
+uint64 gBetaVersion = AppBetaVersion;
+uint64 gRealBetaVersion = AppBetaVersion;
+QByteArray gBetaPrivateKey;
 
 bool gTestMode = false;
 bool gDebug = false;
@@ -33,38 +46,23 @@ QString gLangErrors;
 
 QString gDialogLastPath, gDialogHelperPath; // optimize QFileDialog
 
-bool gSoundNotify = true;
-bool gDesktopNotify = true;
-DBINotifyView gNotifyView = dbinvShowPreview;
 bool gStartMinimized = false;
+bool gStartInTray = false;
 bool gAutoStart = false;
 bool gSendToMenu = false;
+bool gUseExternalVideoPlayer = false;
 bool gAutoUpdate = true;
 TWindowPos gWindowPos;
-bool gFromAutoStart = false;
-#if defined Q_OS_WIN || defined Q_OS_MAC
+LaunchMode gLaunchMode = LaunchModeNormal;
 bool gSupportTray = true;
-#else
-bool gSupportTray = false;
-#endif
-DBIWorkMode gWorkMode = dbiwmWindowAndTray;
-DBIConnectionType gConnectionType = dbictAuto;
-ConnectionProxy gConnectionProxy;
 bool gSeenTrayTooltip = false;
 bool gRestartingUpdate = false, gRestarting = false, gRestartingToSettings = false, gWriteProtected = false;
 int32 gLastUpdateCheck = 0;
 bool gNoStartUpdate = false;
 bool gStartToSettings = false;
-int32 gMaxGroupCount = 200;
-DBIDefaultAttach gDefaultAttach = dbidaDocument;
 bool gReplaceEmojis = true;
-bool gAskDownloadPath = false;
-QString gDownloadPath;
-
-bool gNeedConfigResave = false;
 
 bool gCtrlEnter = false;
-bool gCatsAndDogs = true;
 
 uint32 gConnectionsInSession = 1;
 QString gLoggedPhoneNumber;
@@ -73,16 +71,25 @@ QByteArray gLocalSalt;
 DBIScale gRealScale = dbisAuto, gScreenScale = dbisOne, gConfigScale = dbisAuto;
 bool gCompressPastedImage = true;
 
-DBIEmojiTab gEmojiTab = dbietRecent;
-RecentEmojiPack gRecentEmojis;
-RecentEmojiPreload gRecentEmojisPreload;
+QString gTimeFormat = qsl("hh:mm");
 
-AllStickers gStickers;
-QByteArray gStickersHash;
+RecentEmojiPack gRecentEmoji;
+RecentEmojiPreload gRecentEmojiPreload;
+EmojiColorVariants gEmojiVariants;
 
-EmojiStickersMap gEmojiStickers;
-
+RecentStickerPreload gRecentStickersPreload;
 RecentStickerPack gRecentStickers;
+
+SavedGifs gSavedGifs;
+TimeMs gLastSavedGifsUpdate = 0;
+
+RecentHashtagPack gRecentWriteHashtags, gRecentSearchHashtags;
+
+RecentInlineBots gRecentInlineBots;
+
+bool gPasswordRecovered = false;
+int32 gPasscodeBadTries = 0;
+TimeMs gPasscodeLastTry = 0;
 
 int32 gLang = -2; // auto
 QString gLangFile;
@@ -90,151 +97,133 @@ QString gLangFile;
 bool gRetina = false;
 float64 gRetinaFactor = 1.;
 int32 gIntRetinaFactor = 1;
-#ifdef Q_OS_MAC
-bool gCustomNotifies = false;
-#else
-bool gCustomNotifies = true;
-#endif
-uint64 gInstance = 0.;
 
 #ifdef Q_OS_WIN
 DBIPlatform gPlatform = dbipWindows;
-QUrl gUpdateURL = QUrl(qsl("http://tdesktop.com/win/tupdates/current"));
 #elif defined Q_OS_MAC
 DBIPlatform gPlatform = dbipMac;
-QUrl gUpdateURL = QUrl(qsl("http://tdesktop.com/mac/tupdates/current"));
-#elif defined Q_OS_LINUX32
-DBIPlatform gPlatform = dbipLinux32;
-QUrl gUpdateURL = QUrl(qsl("http://tdesktop.com/linux32/tupdates/current"));
 #elif defined Q_OS_LINUX64
 DBIPlatform gPlatform = dbipLinux64;
-QUrl gUpdateURL = QUrl(qsl("http://tdesktop.com/linux/tupdates/current"));
+#elif defined Q_OS_LINUX32
+DBIPlatform gPlatform = dbipLinux32;
 #else
 #error Unknown platform
 #endif
+QString gPlatformString;
+QUrl gUpdateURL;
+bool gIsElCapitan = false;
 
-bool gContactsReceived = false;
+int gOtherOnline = 0;
 
-bool gWideMode = true;
+SavedPeers gSavedPeers;
+SavedPeersByTime gSavedPeersByTime;
+
+ReportSpamStatuses gReportSpamStatuses;
+
+int32 gAutoDownloadPhoto = 0; // all auto download
+int32 gAutoDownloadAudio = 0;
+int32 gAutoDownloadGif = 0;
+bool gAutoPlayGif = true;
 
 void settingsParseArgs(int argc, char *argv[]) {
-	if (cPlatform() == dbipMac) {
-		gCustomNotifies = false;
-	} else {
-		gCustomNotifies = true;
+#ifdef Q_OS_MAC
+#ifndef OS_MAC_OLD
+	if (QSysInfo::macVersion() >= QSysInfo::MV_10_11) {
+		gIsElCapitan = true;
 	}
-    memset_rand(&gInstance, sizeof(gInstance));
+#else // OS_MAC_OLD
+	gPlatform = dbipMacOld;
+#endif // OS_MAC_OLD
+#endif // Q_OS_MAC
+
+	switch (cPlatform()) {
+	case dbipWindows:
+		gUpdateURL = QUrl(qsl("http://tdesktop.com/win/tupdates/current"));
+#ifndef OS_WIN_STORE
+		gPlatformString = qsl("Windows");
+#else // OS_WIN_STORE
+		gPlatformString = qsl("WinStore");
+#endif // OS_WIN_STORE
+	break;
+	case dbipMac:
+		gUpdateURL = QUrl(qsl("http://tdesktop.com/mac/tupdates/current"));
+#ifndef OS_MAC_STORE
+		gPlatformString = qsl("MacOS");
+#else // OS_MAC_STORE
+		gPlatformString = qsl("MacAppStore");
+#endif // OS_MAC_STORE
+	break;
+	case dbipMacOld:
+		gUpdateURL = QUrl(qsl("http://tdesktop.com/mac32/tupdates/current"));
+		gPlatformString = qsl("MacOSold");
+	break;
+	case dbipLinux64:
+		gUpdateURL = QUrl(qsl("http://tdesktop.com/linux/tupdates/current"));
+		gPlatformString = qsl("Linux64bit");
+	break;
+	case dbipLinux32:
+		gUpdateURL = QUrl(qsl("http://tdesktop.com/linux32/tupdates/current"));
+		gPlatformString = qsl("Linux32bit");
+	break;
+	}
+
+	QStringList args;
+	for (int32 i = 0; i < argc; ++i) {
+		args.push_back('"' + fromUtf8Safe(argv[i]) + '"');
+	}
+	gArguments = args.join(' ');
+
 	gExeDir = psCurrentExeDirectory(argc, argv);
 	gExeName = psCurrentExeName(argc, argv);
     for (int32 i = 0; i < argc; ++i) {
-		if (string("-release") == argv[i]) {
-			gTestMode = false;
-		} else if (string("-debug") == argv[i]) {
+		if (qstr("-testmode") == argv[i]) {
+			gTestMode = true;
+		} else if (qstr("-debug") == argv[i]) {
 			gDebug = true;
-		} else if (string("-many") == argv[i]) {
+		} else if (qstr("-many") == argv[i]) {
 			gManyInstance = true;
-		} else if (string("-key") == argv[i] && i + 1 < argc) {
-			gKeyFile = QString::fromLocal8Bit(argv[++i]);
-		} else if (string("-autostart") == argv[i]) {
-			gFromAutoStart = true;
-		} else if (string("-noupdate") == argv[i]) {
+		} else if (qstr("-key") == argv[i] && i + 1 < argc) {
+			gKeyFile = fromUtf8Safe(argv[++i]);
+		} else if (qstr("-autostart") == argv[i]) {
+			gLaunchMode = LaunchModeAutoStart;
+		} else if (qstr("-fixprevious") == argv[i]) {
+			gLaunchMode = LaunchModeFixPrevious;
+		} else if (qstr("-cleanup") == argv[i]) {
+			gLaunchMode = LaunchModeCleanup;
+		} else if (qstr("-noupdate") == argv[i]) {
 			gNoStartUpdate = true;
-		} else if (string("-tosettings") == argv[i]) {
+		} else if (qstr("-tosettings") == argv[i]) {
 			gStartToSettings = true;
-		} else if (string("-sendpath") == argv[i] && i + 1 < argc) {
+		} else if (qstr("-startintray") == argv[i]) {
+			gStartInTray = true;
+		} else if (qstr("-sendpath") == argv[i] && i + 1 < argc) {
 			for (++i; i < argc; ++i) {
-				gSendPaths.push_back(QString::fromLocal8Bit(argv[i]));
+				gSendPaths.push_back(fromUtf8Safe(argv[i]));
 			}
-		} else if (string("-workdir") == argv[i] && i + 1 < argc) {
-			QString dir = QString::fromLocal8Bit(argv[++i]);
+		} else if (qstr("-workdir") == argv[i] && i + 1 < argc) {
+			QString dir = fromUtf8Safe(argv[++i]);
 			if (QDir().exists(dir)) {
 				gWorkingDir = dir;
 			}
-		} else if (string("--") == argv[i] && i + 1 < argc) {
-			gStartUrl = QString::fromLocal8Bit(argv[++i]);
+		} else if (qstr("--") == argv[i] && i + 1 < argc) {
+			gStartUrl = fromUtf8Safe(argv[++i]).mid(0, 8192);
 		}
 	}
 }
 
-const RecentEmojiPack &cGetRecentEmojis() {
-	if (cRecentEmojis().isEmpty()) {
-		RecentEmojiPack r;
-		if (false && !cRecentEmojisPreload().isEmpty()) {
-			RecentEmojiPreload p(cRecentEmojisPreload());
-			cSetRecentEmojisPreload(RecentEmojiPreload());
-			r.reserve(p.size());
-			for (RecentEmojiPreload::const_iterator i = p.cbegin(), e = p.cend(); i != e; ++i) {
-				uint32 code = ((i->first & 0xFFFFU) == 0xFE0FU) ? ((i->first >> 16) & 0xFFFFU) : i->first;
-				EmojiPtr ep(getEmoji(code));
-				if (!ep) continue;
+RecentStickerPack &cGetRecentStickers() {
+	if (cRecentStickers().isEmpty() && !cRecentStickersPreload().isEmpty()) {
+		RecentStickerPreload p(cRecentStickersPreload());
+		cSetRecentStickersPreload(RecentStickerPreload());
 
-				if (ep->postfix) {
-					int32 j = 0, l = r.size();
-					for (; j < l; ++j) {
-						if (r[j].first->code == code) {
-							break;
-						}
-					}
-					if (j < l) {
-						continue;
-					}
-				}
-				r.push_back(qMakePair(ep, i->second));
-			}
+		RecentStickerPack &recent(cRefRecentStickers());
+		recent.reserve(p.size());
+		for (RecentStickerPreload::const_iterator i = p.cbegin(), e = p.cend(); i != e; ++i) {
+			DocumentData *doc = App::document(i->first);
+			if (!doc || !doc->sticker()) continue;
+
+			recent.push_back(qMakePair(doc, i->second));
 		}
-		uint32 defaultRecent[] = {
-			0xD83DDE02U,
-			0xD83DDE18U,
-			0x2764U,
-			0xD83DDE0DU,
-			0xD83DDE0AU,
-			0xD83DDE01U,
-			0xD83DDC4DU,
-			0x263AU,
-			0xD83DDE14U,
-			0xD83DDE04U,
-			0xD83DDE2DU,
-			0xD83DDC8BU,
-			0xD83DDE12U,
-			0xD83DDE33U,
-			0xD83DDE1CU,
-			0xD83DDE48U,
-			0xD83DDE09U,
-			0xD83DDE03U,
-			0xD83DDE22U,
-			0xD83DDE1DU,
-			0xD83DDE31U,
-			0xD83DDE21U,
-			0xD83DDE0FU,
-			0xD83DDE1EU,
-			0xD83DDE05U,
-			0xD83DDE1AU,
-			0xD83DDE4AU,
-			0xD83DDE0CU,
-			0xD83DDE00U,
-			0xD83DDE0BU,
-			0xD83DDE06U,
-			0xD83DDC4CU,
-			0xD83DDE10U,
-			0xD83DDE15U,
-		};
-		for (int32 i = 0, s = sizeof(defaultRecent) / sizeof(defaultRecent[0]); i < s; ++i) {
-			if (r.size() >= EmojiPadPerRow * EmojiPadRowsPerPage) break;
-
-			EmojiPtr ep(getEmoji(defaultRecent[i]));
-			if (!ep) continue;
-
-			int32 j = 0, l = r.size();
-			for (; j < l; ++j) {
-				if (r[j].first == ep) {
-					break;
-				}
-			}
-			if (j < l) continue;
-
-			r.push_back(qMakePair(ep, 1));
-		}
-		cSetRecentEmojis(r);
 	}
-	return cRecentEmojis();
+	return cRefRecentStickers();
 }

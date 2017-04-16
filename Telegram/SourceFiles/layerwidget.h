@@ -12,81 +12,201 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include "gui/boxshadow.h"
+namespace Window {
+class MainMenu;
+} // namespace Window
 
-class LayeredWidget : public QWidget {
+class LayerWidget : public TWidget {
 	Q_OBJECT
 
 public:
+	using TWidget::TWidget;
 
-	virtual void animStep(float64 ms) {
-	}
 	virtual void parentResized() = 0;
-	virtual void startHide() {
+	virtual void showFinished() {
+	}
+	void setInnerFocus();
+	bool setClosing() {
+		if (!_closing) {
+			_closing = true;
+			closeHook();
+			return true;
+		}
+		return false;
 	}
 
-	virtual void resizeEvent(QResizeEvent *e) {
-		emit resized();
+	bool overlaps(const QRect &globalRect);
+
+	void setClosedCallback(base::lambda<void()> callback) {
+		_closedCallback = std::move(callback);
+	}
+	void setResizedCallback(base::lambda<void()> callback) {
+		_resizedCallback = std::move(callback);
 	}
 
-	virtual QRect boxRect() const {
-		QRect res(rect());
-		res.moveTopLeft(geometry().topLeft());
-		return res;
+protected:
+	void closeLayer() {
+		if (_closedCallback) {
+			_closedCallback();
+		}
 	}
-
-	void mousePressEvent(QMouseEvent *e) {
+	void mousePressEvent(QMouseEvent *e) override {
 		e->accept();
 	}
+	void resizeEvent(QResizeEvent *e) override {
+		if (_resizedCallback) {
+			_resizedCallback();
+		}
+	}
+	virtual void doSetInnerFocus() {
+		setFocus();
+	}
+	virtual void closeHook() {
+	}
 
-signals:
-
-	void closed();
-	void resized();
+private:
+	bool _closing = false;
+	base::lambda<void()> _closedCallback;
+	base::lambda<void()> _resizedCallback;
 
 };
 
-class BackgroundWidget : public QWidget, public Animated {
+class LayerStackWidget : public TWidget {
 	Q_OBJECT
 
 public:
+	LayerStackWidget(QWidget *parent);
 
-	BackgroundWidget(QWidget *parent, LayeredWidget *w);
+	void finishAnimation();
 
-	void showFast();
+	void showBox(object_ptr<BoxContent> box);
+	void showSpecialLayer(object_ptr<LayerWidget> layer);
+	void showMainMenu();
+	void appendBox(object_ptr<BoxContent> box);
+	void prependBox(object_ptr<BoxContent> box);
 
-	void paintEvent(QPaintEvent *e);
-	void keyPressEvent(QKeyEvent *e);
-	void mousePressEvent(QMouseEvent *e);
-	void resizeEvent(QResizeEvent *e);
+	bool canSetFocus() const;
+	void setInnerFocus();
 
-	void updateWideMode();
+	bool contentOverlapped(const QRect &globalRect);
 
-	void replaceInner(LayeredWidget *n);
+	void hideLayers();
+	void hideAll();
+	void hideTopLayer();
 
-	bool animStep(float64 ms);
+	bool layerShown() const;
 
-	~BackgroundWidget();
+	~LayerStackWidget();
 
-public slots:
+protected:
+	void keyPressEvent(QKeyEvent *e) override;
+	void mousePressEvent(QMouseEvent *e) override;
+	void resizeEvent(QResizeEvent *e) override;
 
-	void onClose();
-	bool onInnerClose();
-	void boxDestroyed(QObject *obj);
+private slots:
+	void onLayerDestroyed(QObject *obj);
+	void onLayerClosed(LayerWidget *layer);
+	void onLayerResized();
 
 private:
+	LayerWidget *pushBox(object_ptr<BoxContent> box);
+	void showFinished();
+	void hideCurrent();
 
-	void startHide();
+	enum class Action {
+		ShowMainMenu,
+		ShowSpecialLayer,
+		ShowLayer,
+		HideLayer,
+		HideAll,
+	};
+	template <typename SetupNew, typename ClearOld>
+	void startAnimation(SetupNew setupNewWidgets, ClearOld clearOldWidgets, Action action);
 
-	LayeredWidget *w, *_hidden;
-	anim::fvalue aBackground;
-	anim::transition aBackgroundFunc;
-	bool hiding;
+	void prepareForAnimation();
+	void animationDone();
 
-	BoxShadow shadow;
+	void setCacheImages();
+	void clearLayers();
+	void clearSpecialLayer();
+	void initChildLayer(LayerWidget *layer);
+	void updateLayerBoxes();
+	void fixOrder();
+	void sendFakeMouseEvent();
+
+	LayerWidget *currentLayer() {
+		return _layers.empty() ? nullptr : _layers.back();
+	}
+	const LayerWidget *currentLayer() const {
+		return const_cast<LayerStackWidget*>(this)->currentLayer();
+	}
+
+	using Layers = QList<LayerWidget*>;
+	Layers _layers;
+
+	object_ptr<LayerWidget> _specialLayer = { nullptr };
+	object_ptr<Window::MainMenu> _mainMenu = { nullptr };
+
+	class BackgroundWidget;
+	object_ptr<BackgroundWidget> _background;
+
 };
+
+class MediaPreviewWidget : public TWidget, private base::Subscriber {
+	Q_OBJECT
+
+public:
+	MediaPreviewWidget(QWidget *parent);
+
+	void showPreview(DocumentData *document);
+	void showPreview(PhotoData *photo);
+	void hidePreview();
+
+	~MediaPreviewWidget();
+
+protected:
+	void paintEvent(QPaintEvent *e) override;
+	void resizeEvent(QResizeEvent *e) override;
+
+private:
+	QSize currentDimensions() const;
+	QPixmap currentImage() const;
+	void startShow();
+	void fillEmojiString();
+	void resetGifAndCache();
+
+	Animation _a_shown;
+	bool _hiding = false;
+	DocumentData *_document = nullptr;
+	PhotoData *_photo = nullptr;
+	Media::Clip::ReaderPointer _gif;
+
+	int _emojiSize;
+	QList<EmojiPtr> _emojiList;
+
+	void clipCallback(Media::Clip::Notification notification);
+
+	enum CacheStatus {
+		CacheNotLoaded,
+		CacheThumbLoaded,
+		CacheLoaded,
+	};
+	mutable CacheStatus _cacheStatus = CacheNotLoaded;
+	mutable QPixmap _cache;
+	mutable QSize _cachedSize;
+
+};
+
+template <typename BoxType, typename ...Args>
+inline object_ptr<BoxType> Box(Args&&... args) {
+	auto parent = static_cast<QWidget*>(nullptr);
+	return object_ptr<BoxType>(parent, std::forward<Args>(args)...);
+}

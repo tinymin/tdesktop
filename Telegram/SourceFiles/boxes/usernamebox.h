@@ -12,50 +12,43 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include "layerwidget.h"
+#include "boxes/abstractbox.h"
 
-class UsernameInput : public FlatInput {
-public:
+namespace Ui {
+class UsernameInput;
+class LinkButton;
+} // namespace Ui
 
-	UsernameInput(QWidget *parent, const style::flatInput &st, const QString &ph = QString(), const QString &val = QString());
-
-protected:
-
-	void correctValue(QKeyEvent *e, const QString &was);
-
-};
-
-class UsernameBox : public LayeredWidget, public RPCSender {
+class UsernameBox : public BoxContent, public RPCSender {
 	Q_OBJECT
 
 public:
+	UsernameBox(QWidget*);
 
-	UsernameBox();
-	void parentResized();
-	void animStep(float64 dt);
-	void keyPressEvent(QKeyEvent *e);
-	void paintEvent(QPaintEvent *e);
-	void startHide();
-	~UsernameBox();
+protected:
+	void prepare() override;
+	void setInnerFocus() override;
 
-public slots:
+	void paintEvent(QPaintEvent *e) override;
+	void resizeEvent(QResizeEvent *e) override;
 
+private slots:
 	void onSave();
-	void onCancel();
-	
+
 	void onCheck();
 	void onChanged();
 
+	void onLinkClick();
+
 private:
-
-	void hideAll();
-	void showAll();
-
 	void onUpdateDone(const MTPUser &result);
 	bool onUpdateFail(const RPCError &error);
 
@@ -63,20 +56,16 @@ private:
 	bool onCheckFail(const RPCError &error);
 
 	QString getName() const;
-	void initBox();
+	void updateLinkText();
 
-	int32 _width, _height;
-	FlatButton _saveButton, _cancelButton;
-	UsernameInput _usernameInput;
+	object_ptr<Ui::UsernameInput> _username;
+	object_ptr<Ui::LinkButton> _link;
 
-	QPixmap _cache;
-
-	mtpRequestId _saveRequest, _checkRequest;
+	mtpRequestId _saveRequestId = 0;
+	mtpRequestId _checkRequestId = 0;
 	QString _sentUsername, _checkUsername, _errorText, _goodText;
 
 	Text _about;
-	QTimer _checkTimer;
+	object_ptr<QTimer> _checkTimer;
 
-	anim::fvalue a_opacity;
-	bool _hiding;
 };

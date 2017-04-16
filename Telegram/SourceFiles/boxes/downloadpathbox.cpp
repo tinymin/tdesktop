@@ -12,191 +12,126 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
-#include "stdafx.h"
+#include "boxes/downloadpathbox.h"
+
 #include "lang.h"
+#include "storage/localstorage.h"
+#include "core/file_utilities.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/buttons.h"
+#include "platform/platform_specific.h"
+#include "styles/style_boxes.h"
 
-#include "downloadpathbox.h"
-#include "gui/filedialog.h"
-
-DownloadPathBox::DownloadPathBox() :
-	_path(cDownloadPath()),
-	_defaultRadio(this, qsl("dir_type"), 0, lang(lng_download_path_default_radio), _path.isEmpty()),
-	_tempRadio(this, qsl("dir_type"), 1, lang(lng_download_path_temp_radio), _path == qsl("tmp")),
-	_dirRadio(this, qsl("dir_type"), 2, lang(lng_download_path_dir_radio), !_path.isEmpty() && _path != qsl("tmp")),
-	_dirInput(this, st::inpDownloadDir, QString(), (_path.isEmpty() || _path == qsl("tmp")) ? QString() : QDir::toNativeSeparators(_path)),
-	_saveButton(this, lang(lng_connection_save), st::btnSelectDone),
-	_cancelButton(this, lang(lng_cancel), st::btnSelectCancel),
-	a_opacity(0, 1), _hiding(false) {
-
-	_width = st::addContactWidth;
-
-	connect(&_saveButton, SIGNAL(clicked()), this, SLOT(onSave()));
-	connect(&_cancelButton, SIGNAL(clicked()), this, SLOT(onCancel()));
-
-	connect(&_defaultRadio, SIGNAL(changed()), this, SLOT(onChange()));
-	connect(&_tempRadio, SIGNAL(changed()), this, SLOT(onChange()));
-	connect(&_dirRadio, SIGNAL(changed()), this, SLOT(onChange()));
-
-	connect(&_dirInput, SIGNAL(focused()), this, SLOT(onEditPath()));
-	_dirInput.setCursorPosition(0);
-
-	showAll();
-	_cache = myGrab(this, rect());
-	hideAll();
+DownloadPathBox::DownloadPathBox(QWidget *parent)
+: _path(Global::DownloadPath())
+, _pathBookmark(Global::DownloadPathBookmark())
+, _group(std::make_shared<Ui::RadioenumGroup<Directory>>(typeFromPath(_path)))
+, _default(this, _group, Directory::Downloads, lang(lng_download_path_default_radio), st::defaultBoxCheckbox)
+, _temp(this, _group, Directory::Temp, lang(lng_download_path_temp_radio), st::defaultBoxCheckbox)
+, _dir(this, _group, Directory::Custom, lang(lng_download_path_dir_radio), st::defaultBoxCheckbox)
+, _pathLink(this, QString(), st::boxLinkButton) {
 }
 
-void DownloadPathBox::hideAll() {
-	_defaultRadio.hide();
-	_tempRadio.hide();
-	_dirRadio.hide();
+void DownloadPathBox::prepare() {
+	addButton(lang(lng_connection_save), [this] { save(); });
+	addButton(lang(lng_cancel), [this] { closeBox(); });
 
-	_dirInput.hide();
+	setTitle(lang(lng_download_path_header));
 
-	_saveButton.hide();
-	_cancelButton.hide();
-}
+	_group->setChangedCallback([this](Directory value) { radioChanged(value); });
 
-void DownloadPathBox::showAll() {
-	_defaultRadio.show();
-	_tempRadio.show();
-	_dirRadio.show();
-
-	if (_dirRadio.checked()) {
-		_dirInput.show();
-	} else {
-		_dirInput.hide();
+	connect(_pathLink, SIGNAL(clicked()), this, SLOT(onEditPath()));
+	if (!_path.isEmpty() && _path != qsl("tmp")) {
+		setPathText(QDir::toNativeSeparators(_path));
 	}
-
-	_saveButton.show();
-	_cancelButton.show();
-
-	_defaultRadio.move(st::boxPadding.left(), st::addContactTitleHeight + st::downloadSkip);
-	_tempRadio.move(st::boxPadding.left(), _defaultRadio.y() + _defaultRadio.height() + st::downloadSkip);
-	_dirRadio.move(st::boxPadding.left(), _tempRadio.y() + _tempRadio.height() + st::downloadSkip);
-	int32 inputy = _dirRadio.y() + _dirRadio.height() + st::boxPadding.top();
-
-	_dirInput.move(st::boxPadding.left() + st::rbDefFlat.textLeft, inputy);
-		
-	int32 buttony = (_dirRadio.checked() ? (_dirInput.y() + _dirInput.height()) : (_dirRadio.y() + _dirRadio.height())) + st::downloadSkip;
-
-	_saveButton.move(_width - _saveButton.width(), buttony);
-	_cancelButton.move(0, buttony);
-
-	_height = _saveButton.y() + _saveButton.height();
-	resize(_width, _height);
+	updateControlsVisibility();
 }
 
-void DownloadPathBox::keyPressEvent(QKeyEvent *e) {
-	if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
-	} else if (e->key() == Qt::Key_Escape) {
-		onCancel();
+void DownloadPathBox::updateControlsVisibility() {
+	auto custom = (_group->value() == Directory::Custom);
+	_pathLink->setVisible(custom);
+
+	auto newHeight = st::boxOptionListPadding.top() + _default->heightNoMargins() + st::boxOptionListSkip + _temp->heightNoMargins() + st::boxOptionListSkip + _dir->heightNoMargins();
+	if (custom) {
+		newHeight += st::downloadPathSkip + _pathLink->height();
 	}
+	newHeight += st::boxOptionListPadding.bottom();
+
+	setDimensions(st::boxWideWidth, newHeight);
 }
 
-void DownloadPathBox::parentResized() {
-	QSize s = parentWidget()->size();
-	setGeometry((s.width() - _width) / 2, (s.height() - _height) / 2, _width, _height);
-	update();
+void DownloadPathBox::resizeEvent(QResizeEvent *e) {
+	BoxContent::resizeEvent(e);
+
+	_default->moveToLeft(st::boxPadding.left() + st::boxOptionListPadding.left(), st::boxOptionListPadding.top());
+	_temp->moveToLeft(st::boxPadding.left() + st::boxOptionListPadding.left(), _default->bottomNoMargins() + st::boxOptionListSkip);
+	_dir->moveToLeft(st::boxPadding.left() + st::boxOptionListPadding.left(), _temp->bottomNoMargins() + st::boxOptionListSkip);
+	auto inputx = st::boxPadding.left() + st::boxOptionListPadding.left() + st::defaultBoxCheckbox.textPosition.x();
+	auto inputy = _dir->bottomNoMargins() + st::downloadPathSkip;
+
+	_pathLink->moveToLeft(inputx, inputy);
 }
 
-void DownloadPathBox::paintEvent(QPaintEvent *e) {
-	QPainter p(this);
-	if (_cache.isNull()) {
-		if (!_hiding || a_opacity.current() > 0.01) {
-			// fill bg
-			p.fillRect(0, 0, _width, _height, st::boxBG->b);
-
-			// paint shadows
-			p.fillRect(0, st::addContactTitleHeight, _width, st::scrollDef.topsh, st::scrollDef.shColor->b);
-			p.fillRect(0, _height - st::btnSelectCancel.height - st::scrollDef.bottomsh, _width, st::scrollDef.bottomsh, st::scrollDef.shColor->b);
-
-			// paint button sep
-			p.fillRect(st::btnSelectCancel.width, _height - st::btnSelectCancel.height, st::lineWidth, st::btnSelectCancel.height, st::btnSelectSep->b);
-
-			// draw box title / text
-			p.setFont(st::addContactTitleFont->f);
-			p.setPen(st::black->p);
-			p.drawText(st::addContactTitlePos.x(), st::addContactTitlePos.y() + st::addContactTitleFont->ascent, lang(lng_download_path_header));
-		}
-	} else {
-		p.setOpacity(a_opacity.current());
-		p.drawPixmap(0, 0, _cache);
-	}
-}
-
-void DownloadPathBox::animStep(float64 dt) {
-	if (dt >= 1) {
-		a_opacity.finish();
-		_cache = QPixmap();
-		if (!_hiding) {
-			showAll();
-		}
-	} else {
-		a_opacity.update(dt, anim::linear);
-	}
-	update();
-}
-
-void DownloadPathBox::onChange() {
-	if (_dirRadio.checked()) {
+void DownloadPathBox::radioChanged(Directory value) {
+	if (value == Directory::Custom) {
 		if (_path.isEmpty() || _path == qsl("tmp")) {
-			(_path.isEmpty() ? _defaultRadio : _tempRadio).setChecked(true);
+			_group->setValue(_path.isEmpty() ? Directory::Downloads : Directory::Temp);
 			onEditPath();
-			if (!_path.isEmpty() && _path != qsl("tmp")) {
-				_dirRadio.setChecked(true);
-			}
 		} else {
-			_dirInput.setText(QDir::toNativeSeparators(_path));
-			_dirInput.setCursorPosition(0);
+			setPathText(QDir::toNativeSeparators(_path));
 		}
-	} else if (_tempRadio.checked()) {
+	} else if (value == Directory::Temp) {
 		_path = qsl("tmp");
 	} else {
 		_path = QString();
 	}
-	showAll();
+	updateControlsVisibility();
 	update();
 }
 
 void DownloadPathBox::onEditPath() {
-	_dirInput.clearFocus();
-
-	filedialogInit();
-	QString path, lastPath = cDialogLastPath();
-	if (!cDownloadPath().isEmpty()) {
-		cSetDialogLastPath(cDownloadPath());
-	}
-	if (filedialogGetDir(path, lang(lng_download_path_choose))) {
-		if (!path.isEmpty()) {
-			_path = path + '/';
-			_dirInput.setText(QDir::toNativeSeparators(_path));
-			_dirInput.setCursorPosition(0);
+	auto initialPath = [] {
+		if (!Global::DownloadPath().isEmpty() && Global::DownloadPath() != qstr("tmp")) {
+			return Global::DownloadPath().left(Global::DownloadPath().size() - (Global::DownloadPath().endsWith('/') ? 1 : 0));
 		}
-	}
-	cSetDialogLastPath(lastPath);
+		return QString();
+	};
+	FileDialog::GetFolder(lang(lng_download_path_choose), initialPath(), base::lambda_guarded(this, [this](const QString &result) {
+		if (!result.isEmpty()) {
+			_path = result + '/';
+			_pathBookmark = psDownloadPathBookmark(_path);
+			setPathText(QDir::toNativeSeparators(_path));
+			_group->setValue(Directory::Custom);
+		}
+	}));
 }
 
-void DownloadPathBox::onSave() {
-	cSetDownloadPath(_defaultRadio.checked() ? QString() : (_tempRadio.checked() ? qsl("tmp") : _path));
-	App::writeUserConfig();
-	emit closed();
+void DownloadPathBox::save() {
+#ifndef OS_WIN_STORE
+	auto value = _group->value();
+	auto computePath = [this, value] {
+		if (value == Directory::Custom) {
+			return _path;
+		} else if (value == Directory::Temp) {
+			return qsl("tmp");
+		}
+		return QString();
+	};
+	Global::SetDownloadPath(computePath());
+	Global::SetDownloadPathBookmark((value == Directory::Custom) ? _pathBookmark : QByteArray());
+	Local::writeUserSettings();
+	Global::RefDownloadPathChanged().notify();
+	closeBox();
+#endif // OS_WIN_STORE
 }
 
-void DownloadPathBox::onCancel() {
-	emit closed();
-}
-
-void DownloadPathBox::startHide() {
-	_hiding = true;
-	if (_cache.isNull()) {
-		_cache = myGrab(this, rect());
-		hideAll();
-	}
-	a_opacity.start(0);
-}
-
-DownloadPathBox::~DownloadPathBox() {
+void DownloadPathBox::setPathText(const QString &text) {
+	auto availw = st::boxWideWidth - st::boxPadding.left() - st::defaultBoxCheckbox.textPosition.x() - st::boxPadding.right();
+	_pathLink->setText(st::boxTextFont->elided(text, availw));
 }

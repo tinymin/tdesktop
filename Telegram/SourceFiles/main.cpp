@@ -12,68 +12,55 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
-#include "stdafx.h"
 #include "application.h"
-#include "pspecific.h"
+#include "platform/platform_specific.h"
+#include "storage/localstorage.h"
 
 int main(int argc, char *argv[]) {
-#ifdef _NEED_WIN_GENERATE_DUMP
-	_oldWndExceptionFilter = SetUnhandledExceptionFilter(_exceptionFilter);
-#endif
+#ifndef Q_OS_MAC // Retina display support is working fine, others are not.
+	QCoreApplication::setAttribute(Qt::AA_DisableHighDpiScaling, true);
+#endif // Q_OS_MAC
+	QCoreApplication::setApplicationName(qsl("TelegramDesktop"));
 
 	settingsParseArgs(argc, argv);
-	for (int32 i = 0; i < argc; ++i) {
-		if (string("-fixprevious") == argv[i]) {
-			return psFixPrevious();
-		} else if (string("-cleanup") == argv[i]) {
-			return psCleanup();
-		}
-	}
-	logsInit();
-
-	App::readConfig();
-	if (cFromAutoStart() && !cAutoStart()) {
-		psAutoStart(false, true);
-		return 0;
+	if (cLaunchMode() == LaunchModeFixPrevious) {
+		return psFixPrevious();
+	} else if (cLaunchMode() == LaunchModeCleanup) {
+		return psCleanup();
 	}
 
-	DEBUG_LOG(("Application Info: Telegram started, test mode: %1, exe dir: %2").arg(logBool(cTestMode())).arg(cExeDir()));
-	if (cDebug()) {
-		LOG(("Application Info: Telegram started in debug mode"));
-		for (int32 i = 0; i < argc; ++i) {
-			LOG(("Argument: %1").arg(QString::fromLocal8Bit(argv[i])));
-		}
-        QStringList errs = psInitErrors();
-        for (int32 i = 0, l = errs.size(); i < l; ++i) {
-            LOG(("Init Error: %1").arg(errs.at(i)));
-        }
-    }
+	// both are finished in Application::closeApplication
+	Logs::start(); // must be started before Platform is started
+	Platform::start(); // must be started before QApplication is created
 
-	DEBUG_LOG(("Application Info: ideal thread count: %1, using %2 connections per session").arg(QThread::idealThreadCount()).arg(cConnectionsInSession()));
-
-	psStart();
 	int result = 0;
 	{
 		Application app(argc, argv);
-		if (!App::quiting()) {
-			result = app.exec();
-		}
+		result = app.exec();
 	}
-    psFinish();
 
-	DEBUG_LOG(("Application Info: Telegram done, result: %1").arg(result));
+	DEBUG_LOG(("Telegram finished, result: %1").arg(result));
 
+#ifndef TDESKTOP_DISABLE_AUTOUPDATE
 	if (cRestartingUpdate()) {
-		DEBUG_LOG(("Application Info: executing updater to install update.."));
+		DEBUG_LOG(("Application Info: executing updater to install update..."));
 		psExecUpdater();
-	} else if (cRestarting()) {
-		DEBUG_LOG(("Application Info: executing Telegram, because of restart.."));
+	} else
+#endif // !TDESKTOP_DISABLE_AUTOUPDATE
+	if (cRestarting()) {
+		DEBUG_LOG(("Application Info: executing Telegram, because of restart..."));
 		psExecTelegram();
 	}
 
-	logsClose();
+	SignalHandlers::finish();
+	Platform::finish();
+	Logs::finish();
+
 	return result;
 }

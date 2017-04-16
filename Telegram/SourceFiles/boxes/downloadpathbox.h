@@ -12,48 +12,66 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include "layerwidget.h"
-#include "gui/phoneinput.h"
+#include "boxes/abstractbox.h"
+#include "core/observer.h"
 
-class DownloadPathBox : public LayeredWidget {
+namespace Ui {
+template <typename Enum>
+class RadioenumGroup;
+template <typename Enum>
+class Radioenum;
+class LinkButton;
+} // namespace Ui
+
+class DownloadPathBox : public BoxContent {
 	Q_OBJECT
 
 public:
+	DownloadPathBox(QWidget *parent);
 
-	DownloadPathBox();
-	void parentResized();
-	void animStep(float64 dt);
-	void keyPressEvent(QKeyEvent *e);
-	void paintEvent(QPaintEvent *e);
-	void startHide();
-	~DownloadPathBox();
+protected:
+	void prepare() override;
 
-public slots:
+	void resizeEvent(QResizeEvent *e) override;
 
-	void onChange();
+private slots:
 	void onEditPath();
-	void onSave();
-	void onCancel();
 
 private:
+	enum class Directory {
+		Downloads,
+		Temp,
+		Custom,
+	};
+	void radioChanged(Directory value);
+	Directory typeFromPath(const QString &path) {
+		if (path.isEmpty()) {
+			return Directory::Downloads;
+		} else if (path == qsl("tmp")) {
+			return Directory::Temp;
+		}
+		return Directory::Custom;
+	}
 
-	void hideAll();
-	void showAll();
+	void save();
+	void updateControlsVisibility();
+	void setPathText(const QString &text);
 
 	QString _path;
+	QByteArray _pathBookmark;
 
-	FlatRadiobutton _defaultRadio, _tempRadio, _dirRadio;
-	FlatInput _dirInput;
-	FlatButton _saveButton, _cancelButton;
+	std::shared_ptr<Ui::RadioenumGroup<Directory>> _group;
+	object_ptr<Ui::Radioenum<Directory>> _default;
+	object_ptr<Ui::Radioenum<Directory>> _temp;
+	object_ptr<Ui::Radioenum<Directory>> _dir;
+	object_ptr<Ui::LinkButton> _pathLink;
 
-	int32 _width, _height;
-	QPixmap _cache;
-
-	anim::fvalue a_opacity;
-	bool _hiding;
 };

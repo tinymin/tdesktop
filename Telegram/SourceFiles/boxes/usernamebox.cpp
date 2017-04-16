@@ -12,186 +12,126 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
-#include "stdafx.h"
+#include "boxes/usernamebox.h"
+
 #include "lang.h"
-
 #include "application.h"
-#include "usernamebox.h"
 #include "mainwidget.h"
-#include "window.h"
+#include "mainwindow.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/input_fields.h"
+#include "ui/toast/toast.h"
+#include "styles/style_boxes.h"
+#include "messenger.h"
 
-UsernameInput::UsernameInput(QWidget *parent, const style::flatInput &st, const QString &ph, const QString &val) : FlatInput(parent, st, ph, val) {
+UsernameBox::UsernameBox(QWidget*)
+: _username(this, st::defaultInputField, qsl("@username"), App::self()->username, false)
+, _link(this, QString(), st::boxLinkButton)
+, _about(st::boxWidth - st::usernamePadding.left())
+, _checkTimer(this) {
 }
 
-void UsernameInput::correctValue(QKeyEvent *e, const QString &was) {
-	QString oldText(text()), newText;
-	int32 newPos = cursorPosition(), from, len = oldText.size();
-	for (from = 0; from < len; ++from) {
-		if (!oldText.at(from).isSpace()) {
-			break;
-		}
-		if (newPos > 0) --newPos;
-	}
-	len -= from;
-	if (len > MaxUsernameLength) len = MaxUsernameLength + (oldText.at(from) == '@' ? 1 : 0);
-	for (int32 to = from + len; to > from;) {
-		--to;
-		if (!oldText.at(to).isSpace()) {
-			break;
-		}
-		--len;
-	}
-	newText = oldText.mid(from, len);
-	if (newText != oldText) {
-		setText(newText);
-		setCursorPosition(newPos);
-	}
-}
-
-UsernameBox::UsernameBox() :
-_saveButton(this, lang(lng_settings_save), st::usernameDone),
-_cancelButton(this, lang(lng_cancel), st::usernameCancel),
-_usernameInput(this, st::inpAddContact, qsl("@username"), App::self()->username),
-_saveRequest(0), _checkRequest(0), _about(st::usernameWidth - 2 * st::addContactTitlePos.x()),
-a_opacity(0, 1), _hiding(false) {
-	_about.setRichText(st::usernameFont, lang(lng_username_about));
+void UsernameBox::prepare() {
 	_goodText = App::self()->username.isEmpty() ? QString() : lang(lng_username_available);
-	initBox();
+
+	setTitle(lang(lng_username_title));
+
+	addButton(lang(lng_settings_save), [this] { onSave(); });
+	addButton(lang(lng_cancel), [this] { closeBox(); });
+
+	connect(_username, SIGNAL(changed()), this, SLOT(onChanged()));
+	connect(_username, SIGNAL(submitted(bool)), this, SLOT(onSave()));
+	connect(_link, SIGNAL(clicked()), this, SLOT(onLinkClick()));
+
+	_about.setRichText(st::usernameTextStyle, lang(lng_username_about));
+	setDimensions(st::boxWidth, st::usernamePadding.top() + _username->height() + st::usernameSkip + _about.countHeight(st::boxWidth - st::usernamePadding.left()) + 3 * st::usernameTextStyle.lineHeight + st::usernamePadding.bottom());
+
+	_checkTimer->setSingleShot(true);
+	connect(_checkTimer, SIGNAL(timeout()), this, SLOT(onCheck()));
+
+	updateLinkText();
 }
 
-void UsernameBox::initBox() {
-	_width = st::usernameWidth;
-	_height = st::addContactTitleHeight + st::addContactPadding.top() + _usernameInput.height() + st::addContactPadding.bottom() + _about.countHeight(st::usernameWidth - 2 * st::addContactTitlePos.x()) + st::usernameSkip + _saveButton.height();
-	_usernameInput.setGeometry(st::addContactPadding.left(), st::addContactTitleHeight + st::addContactPadding.top(), _width - st::addContactPadding.left() - st::addContactPadding.right(), _usernameInput.height());
-
-	int32 buttonTop = _height - _cancelButton.height();
-	_cancelButton.move(0, buttonTop);
-	_saveButton.move(_width - _saveButton.width(), buttonTop);
-
-	connect(&_saveButton, SIGNAL(clicked()), this, SLOT(onSave()));
-	connect(&_cancelButton, SIGNAL(clicked()), this, SLOT(onCancel()));
-	connect(&_usernameInput, SIGNAL(changed()), this, SLOT(onChanged()));
-
-	_checkTimer.setSingleShot(true);
-	connect(&_checkTimer, SIGNAL(timeout()), this, SLOT(onCheck()));
-
-	resize(_width, _height);
-
-	showAll();
-	_cache = myGrab(this, rect());
-	hideAll();
-}
-
-void UsernameBox::hideAll() {
-	_usernameInput.hide();
-	_saveButton.hide();
-	_cancelButton.hide();
-}
-
-void UsernameBox::showAll() {
-	_usernameInput.show();
-	_saveButton.show();
-	_cancelButton.show();
-}
-
-void UsernameBox::keyPressEvent(QKeyEvent *e) {
-	if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
-		onSave();
-	} else if (e->key() == Qt::Key_Escape) {
-		onCancel();
-	}
-}
-
-void UsernameBox::parentResized() {
-	QSize s = parentWidget()->size();
-	setGeometry((s.width() - _width) / 2, (s.height() - _height) / 2, _width, _height);
-	update();
+void UsernameBox::setInnerFocus() {
+	_username->setFocusFast();
 }
 
 void UsernameBox::paintEvent(QPaintEvent *e) {
-	QPainter p(this);
-	if (_cache.isNull()) {
-		if (!_hiding || a_opacity.current() > 0.01) {
-			// fill bg
-			p.fillRect(QRect(QPoint(0, 0), size()), st::boxBG->b);
+	BoxContent::paintEvent(e);
 
-			// paint shadows
-			p.fillRect(0, st::addContactTitleHeight, _width, st::scrollDef.topsh, st::scrollDef.shColor->b);
-			p.fillRect(0, size().height() - st::usernameCancel.height - st::scrollDef.bottomsh, _width, st::scrollDef.bottomsh, st::scrollDef.shColor->b);
+	Painter p(this);
 
-			// paint button sep
-			p.fillRect(st::usernameCancel.width, size().height() - st::usernameCancel.height, st::lineWidth, st::usernameCancel.height, st::btnSelectSep->b);
-
-			// draw box title / text
-			p.setPen(st::black->p);
-			p.setFont(st::addContactTitleFont->f);
-			p.drawText(st::addContactTitlePos.x(), st::addContactTitlePos.y() + st::addContactTitleFont->ascent, lang(lng_username_title));
-
-			if (!_errorText.isEmpty()) {
-				p.setPen(st::setErrColor->p);
-				p.setFont(st::setErrFont->f);
-				int32 w = st::setErrFont->m.width(_errorText);
-				p.drawText((_width - w) / 2, _usernameInput.y() + _usernameInput.height() + ((st::usernameSkip - st::setErrFont->height) / 2) + st::setErrFont->ascent, _errorText);
-			} else if (!_goodText.isEmpty()) {
-				p.setPen(st::setGoodColor->p);
-				p.setFont(st::setErrFont->f);
-				int32 w = st::setErrFont->m.width(_goodText);
-				p.drawText((_width - w) / 2, _usernameInput.y() + _usernameInput.height() + ((st::usernameSkip - st::setErrFont->height) / 2) + st::setErrFont->ascent, _goodText);
-			}
-			p.setPen(st::usernameColor->p);
-			_about.draw(p, st::addContactTitlePos.x(), _usernameInput.y() + _usernameInput.height() + st::usernameSkip, width() - 2 * st::addContactTitlePos.x());
-		}
+	p.setFont(st::boxTextFont);
+	if (!_errorText.isEmpty()) {
+		p.setPen(st::boxTextFgError);
+		p.drawTextLeft(st::usernamePadding.left(), _username->y() + _username->height() + ((st::usernameSkip - st::boxTextFont->height) / 2), width(), _errorText);
+	} else if (!_goodText.isEmpty()) {
+		p.setPen(st::boxTextFgGood);
+		p.drawTextLeft(st::usernamePadding.left(), _username->y() + _username->height() + ((st::usernameSkip - st::boxTextFont->height) / 2), width(), _goodText);
 	} else {
-		p.setOpacity(a_opacity.current());
-		p.drawPixmap(0, 0, _cache);
+		p.setPen(st::usernameDefaultFg);
+		p.drawTextLeft(st::usernamePadding.left(), _username->y() + _username->height() + ((st::usernameSkip - st::boxTextFont->height) / 2), width(), lang(lng_username_choose));
+	}
+	p.setPen(st::boxTextFg);
+	int32 availw = st::boxWidth - st::usernamePadding.left(), h = _about.countHeight(availw);
+	_about.drawLeft(p, st::usernamePadding.left(), _username->y() + _username->height() + st::usernameSkip, availw, width());
+
+	int32 linky = _username->y() + _username->height() + st::usernameSkip + h + st::usernameTextStyle.lineHeight + ((st::usernameTextStyle.lineHeight - st::boxTextFont->height) / 2);
+	if (_link->isHidden()) {
+		p.drawTextLeft(st::usernamePadding.left(), linky, width(), lang(lng_username_link_willbe));
+		p.setPen(st::usernameDefaultFg);
+		p.drawTextLeft(st::usernamePadding.left(), linky + st::usernameTextStyle.lineHeight + ((st::usernameTextStyle.lineHeight - st::boxTextFont->height) / 2), width(), Messenger::Instance().createInternalLinkFull(qsl("username")));
+	} else {
+		p.drawTextLeft(st::usernamePadding.left(), linky, width(), lang(lng_username_link));
 	}
 }
 
-void UsernameBox::animStep(float64 dt) {
-	if (dt >= 1) {
-		a_opacity.finish();
-		_cache = QPixmap();
-		if (!_hiding) {
-			showAll();
-			_usernameInput.setFocus();
-		}
-	} else {
-		a_opacity.update(dt, anim::linear);
-	}
-	update();
+void UsernameBox::resizeEvent(QResizeEvent *e) {
+	BoxContent::resizeEvent(e);
+
+	_username->resize(width() - st::usernamePadding.left() - st::usernamePadding.right(), _username->height());
+	_username->moveToLeft(st::usernamePadding.left(), st::usernamePadding.top());
+
+	int32 availw = st::boxWidth - st::usernamePadding.left(), h = _about.countHeight(availw);
+	int32 linky = _username->y() + _username->height() + st::usernameSkip + h + st::usernameTextStyle.lineHeight + ((st::usernameTextStyle.lineHeight - st::boxTextFont->height) / 2);
+	_link->moveToLeft(st::usernamePadding.left(), linky + st::usernameTextStyle.lineHeight + ((st::usernameTextStyle.lineHeight - st::boxTextFont->height) / 2));
 }
 
 void UsernameBox::onSave() {
-	if (_saveRequest) return;
+	if (_saveRequestId) return;
 
 	_sentUsername = getName();
-	_saveRequest = MTP::send(MTPaccount_UpdateUsername(MTP_string(_sentUsername)), rpcDone(&UsernameBox::onUpdateDone), rpcFail(&UsernameBox::onUpdateFail));
+	_saveRequestId = MTP::send(MTPaccount_UpdateUsername(MTP_string(_sentUsername)), rpcDone(&UsernameBox::onUpdateDone), rpcFail(&UsernameBox::onUpdateFail));
 }
 
 void UsernameBox::onCheck() {
-	if (_checkRequest) {
-		MTP::cancel(_checkRequest);
+	if (_checkRequestId) {
+		MTP::cancel(_checkRequestId);
 	}
 	QString name = getName();
 	if (name.size() >= MinUsernameLength) {
-		_checkUsername = getName();
-		_checkRequest = MTP::send(MTPaccount_CheckUsername(MTP_string(name)), rpcDone(&UsernameBox::onCheckDone), rpcFail(&UsernameBox::onCheckFail));
+		_checkUsername = name;
+		_checkRequestId = MTP::send(MTPaccount_CheckUsername(MTP_string(name)), rpcDone(&UsernameBox::onCheckDone), rpcFail(&UsernameBox::onCheckFail));
 	}
 }
 
 void UsernameBox::onChanged() {
+	updateLinkText();
 	QString name = getName();
 	if (name.isEmpty()) {
 		if (!_errorText.isEmpty() || !_goodText.isEmpty()) {
 			_errorText = _goodText = QString();
 			update();
 		}
-		_checkTimer.stop();
+		_checkTimer->stop();
 	} else {
-		int32 i, len = name.size();
+		int32 len = name.size();
 		for (int32 i = 0; i < len; ++i) {
 			QChar ch = name.at(i);
 			if ((ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '_' && (ch != '@' || i > 0)) {
@@ -199,7 +139,7 @@ void UsernameBox::onChanged() {
 					_errorText = lang(lng_username_bad_symbols);
 					update();
 				}
-				_checkTimer.stop();
+				_checkTimer->stop();
 				return;
 			}
 		}
@@ -208,47 +148,56 @@ void UsernameBox::onChanged() {
 				_errorText = lang(lng_username_too_short);
 				update();
 			}
-			_checkTimer.stop();
+			_checkTimer->stop();
 		} else {
 			if (!_errorText.isEmpty() || !_goodText.isEmpty()) {
 				_errorText = _goodText = QString();
 				update();
 			}
-			_checkTimer.start(UsernameCheckTimeout);
+			_checkTimer->start(UsernameCheckTimeout);
 		}
 	}
 }
 
+void UsernameBox::onLinkClick() {
+	Application::clipboard()->setText(Messenger::Instance().createInternalLinkFull(getName()));
+	Ui::Toast::Show(lang(lng_username_copied));
+}
+
 void UsernameBox::onUpdateDone(const MTPUser &user) {
 	App::feedUsers(MTP_vector<MTPUser>(1, user));
-	emit closed();
+	closeBox();
 }
 
 bool UsernameBox::onUpdateFail(const RPCError &error) {
-	_saveRequest = 0;
-	QString err(error.type()), name = getName();
-	if (err == "USERNAME_NOT_MODIFIED" || _sentUsername == App::self()->username) {
-		App::self()->setName(textOneLine(App::self()->firstName), textOneLine(App::self()->lastName), textOneLine(App::self()->nameOrPhone), textOneLine(name));
-		emit closed();
+	if (MTP::isDefaultHandledError(error)) return false;
+
+	_saveRequestId = 0;
+	QString err(error.type());
+	if (err == qstr("USERNAME_NOT_MODIFIED") || _sentUsername == App::self()->username) {
+		App::self()->setName(textOneLine(App::self()->firstName), textOneLine(App::self()->lastName), textOneLine(App::self()->nameOrPhone), textOneLine(_sentUsername));
+		closeBox();
 		return true;
-	} else if (err == "USERNAME_INVALID") {
-		_usernameInput.setFocus();
-		_usernameInput.notaBene();
+	} else if (err == qstr("USERNAME_INVALID")) {
+		_username->setFocus();
+		_username->showError();
 		_errorText = lang(lng_username_invalid);
+		update();
 		return true;
-	} else if (err == "USERNAME_OCCUPIED" || err == "USERNAMES_UNAVAILABLE") {
-		_usernameInput.setFocus();
-		_usernameInput.notaBene();
+	} else if (err == qstr("USERNAME_OCCUPIED") || err == qstr("USERNAMES_UNAVAILABLE")) {
+		_username->setFocus();
+		_username->showError();
 		_errorText = lang(lng_username_occupied);
+		update();
 		return true;
 	}
-	_usernameInput.setFocus();
+	_username->setFocus();
 	return true;
 }
 
 void UsernameBox::onCheckDone(const MTPBool &result) {
-	_checkRequest = 0;
-	QString newError = (result.v || _checkUsername == App::self()->username) ? QString() : lang(lng_username_occupied);
+	_checkRequestId = 0;
+	QString newError = (mtpIsTrue(result) || _checkUsername == App::self()->username) ? QString() : lang(lng_username_occupied);
 	QString newGood = newError.isEmpty() ? lang(lng_username_available) : QString();
 	if (_errorText != newError || _goodText != newGood) {
 		_errorText = newError;
@@ -258,38 +207,40 @@ void UsernameBox::onCheckDone(const MTPBool &result) {
 }
 
 bool UsernameBox::onCheckFail(const RPCError &error) {
-	_checkRequest = 0;
+	if (MTP::isDefaultHandledError(error)) return false;
+
+	_checkRequestId = 0;
 	QString err(error.type());
-	if (err == "USERNAME_INVALID") {
+	if (err == qstr("USERNAME_INVALID")) {
 		_errorText = lang(lng_username_invalid);
 		update();
 		return true;
-	} else if (err == "USERNAME_OCCUPIED" && _checkUsername != App::self()->username) {
+	} else if (err == qstr("USERNAME_OCCUPIED") && _checkUsername != App::self()->username) {
 		_errorText = lang(lng_username_occupied);
 		update();
 		return true;
 	}
 	_goodText = QString();
-	_usernameInput.setFocus();
+	_username->setFocus();
 	return true;
 }
 
 QString UsernameBox::getName() const {
-	return _usernameInput.text().replace('@', QString()).trimmed();
+	return _username->text().replace('@', QString()).trimmed();
 }
 
-void UsernameBox::onCancel() {
-	emit closed();
-}
-
-void UsernameBox::startHide() {
-	_hiding = true;
-	if (_cache.isNull()) {
-		_cache = myGrab(this, rect());
-		hideAll();
+void UsernameBox::updateLinkText() {
+	QString uname = getName();
+	_link->setText(st::boxTextFont->elided(Messenger::Instance().createInternalLinkFull(uname), st::boxWidth - st::usernamePadding.left() - st::usernamePadding.right()));
+	if (uname.isEmpty()) {
+		if (!_link->isHidden()) {
+			_link->hide();
+			update();
+		}
+	} else {
+		if (_link->isHidden()) {
+			_link->show();
+			update();
+		}
 	}
-	a_opacity.start(0);
-}
-
-UsernameBox::~UsernameBox() {
 }

@@ -12,53 +12,57 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include "layerwidget.h"
+#include "boxes/abstractbox.h"
 
-class PhotoCropBox : public LayeredWidget {
+class PhotoCropBox : public BoxContent {
 	Q_OBJECT
 
 public:
+	PhotoCropBox(QWidget*, const QImage &img, const PeerId &peer);
+	PhotoCropBox(QWidget*, const QImage &img, PeerData *peer);
 
-	PhotoCropBox(const QImage &img, const PeerId &peer);
-	void parentResized();
-	void animStep(float64 ms);
-	void keyPressEvent(QKeyEvent *e);
-	void paintEvent(QPaintEvent *e);
-	void startHide();
-	void mousePressEvent(QMouseEvent *e);
-	void mouseReleaseEvent(QMouseEvent *e);
-	void mouseMoveEvent(QMouseEvent *e);
 	int32 mouseState(QPoint p);
-	~PhotoCropBox();
 
-public slots:
-
-	void onSend();
-	void onCancel();
-	void onReady(const QImage &tosend);
+	void closeHook() override {
+		emit closed();
+	}
 
 signals:
-
 	void ready(const QImage &tosend);
+	void closed();
+
+private slots:
+	void onReady(const QImage &tosend);
+
+protected:
+	void prepare() override;
+
+	void keyPressEvent(QKeyEvent *e) override;
+	void paintEvent(QPaintEvent *e) override;
+	void mousePressEvent(QMouseEvent *e) override;
+	void mouseReleaseEvent(QMouseEvent *e) override;
+	void mouseMoveEvent(QMouseEvent *e) override;
 
 private:
+	void init(const QImage &img, PeerData *peer);
+	void sendPhoto();
 
-	int32 _downState;
-	int32 _width, _height, _thumbx, _thumby, _thumbw, _thumbh;
+	QString _title;
+	int32 _downState = 0;
+	int32 _thumbx, _thumby, _thumbw, _thumbh;
 	int32 _cropx, _cropy, _cropw;
 	int32 _fromposx, _fromposy, _fromcropx, _fromcropy, _fromcropw;
-	FlatButton _sendButton, _cancelButton;
 	QImage _img;
 	QPixmap _thumb;
+	QImage _mask, _fade;
 	PeerId _peerId;
-
-	anim::fvalue a_opacity;
-
-	bool _hiding;
 
 };

@@ -12,82 +12,100 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include <QtWidgets/QWidget>
-#include "gui/flatbutton.h"
-#include "gui/flatinput.h"
-#include "intro.h"
+#include "intro/introwidget.h"
+#include "ui/widgets/input_fields.h"
 
-class CodeInput : public FlatInput {
+namespace Ui {
+class RoundButton;
+class LinkButton;
+class FlatLabel;
+} // namespace Ui
+
+namespace Intro {
+
+class CodeInput final : public Ui::MaskedInputField {
 	Q_OBJECT
 
 public:
+	CodeInput(QWidget *parent, const style::InputField &st, const QString &ph);
 
-	CodeInput(QWidget *parent, const style::flatInput &st, const QString &ph);
+	void setDigitsCountMax(int digitsCount);
 
 signals:
-
 	void codeEntered();
 
 protected:
+	void correctValue(const QString &was, int wasCursor, QString &now, int &nowCursor) override;
 
-	void correctValue(QKeyEvent *e, const QString &was);
+private:
+	int _digitsCountMax = 5;
 
 };
 
-class IntroCode : public IntroStage, public Animated, public RPCSender {
+class CodeWidget : public Widget::Step {
 	Q_OBJECT
 
 public:
+	CodeWidget(QWidget *parent, Widget::Data *data);
 
-	IntroCode(IntroWidget *parent);
-
-	void paintEvent(QPaintEvent *e);
-	void resizeEvent(QResizeEvent *e);
-
-	bool animStep(float64 ms);
-
-	void activate();
-	void deactivate();
-	void onNext();
-	void onBack();
-
-	bool hasBack() const {
+	bool hasBack() const override {
 		return true;
 	}
+	void setInnerFocus() override;
+	void activate() override;
+	void finished() override;
+	void cancelled() override;
+	void submit() override;
 
-	void codeSubmitDone(const MTPauth_Authorization &result);
-	bool codeSubmitFail(const RPCError &error);
+	void updateDescText();
 
-public slots:
+protected:
+	void resizeEvent(QResizeEvent *e) override;
 
-	void onSubmitCode(bool force = false);
+private slots:
+	void onNoTelegramCode();
 	void onInputChange();
 	void onSendCall();
 	void onCheckRequest();
 
 private:
+	void updateCallText();
 
-	void showError(const QString &err);
-	void callDone(const MTPBool &v);
+	void codeSubmitDone(const MTPauth_Authorization &result);
+	bool codeSubmitFail(const RPCError &error);
+
+	void showCodeError(const QString &text);
+	void callDone(const MTPauth_SentCode &v);
+	void gotPassword(const MTPaccount_Password &result);
+
+	void noTelegramCodeDone(const MTPauth_SentCode &result);
+	bool noTelegramCodeFail(const RPCError &result);
+
 	void stopCheck();
 
-	QString error;
-	anim::fvalue errorAlpha;
+	object_ptr<Ui::LinkButton> _noTelegramCode;
+	mtpRequestId _noTelegramCodeRequestId = 0;
 
-	FlatButton next;
+	object_ptr<CodeInput> _code;
+	QString _sentCode;
+	mtpRequestId _sentRequest = 0;
 
-	QRect textRect;
+	object_ptr<QTimer> _callTimer;
+	Widget::Data::CallStatus _callStatus;
+	int _callTimeout;
+	mtpRequestId _callRequestId = 0;
+	object_ptr<Ui::FlatLabel> _callLabel;
 
-	CodeInput code;
-	QString sentCode;
-	mtpRequestId sentRequest;
-	QTimer callTimer;
-	int32 waitTillCall;
+	object_ptr<QTimer> _checkRequest;
 
-	QTimer checkRequest;
 };
+
+} // namespace Intro

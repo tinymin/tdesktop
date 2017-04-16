@@ -12,34 +12,60 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
-Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
-*/
-#include "stdafx.h"
-#include "style.h"
-#include "lang.h"
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
 
-#include "app.h"
-#include "application.h"
+Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
+*/
+#include "boxes/photocropbox.h"
+
+#include "lang.h"
+#include "messenger.h"
 #include "mainwidget.h"
 #include "photocropbox.h"
-#include "fileuploader.h"
+#include "storage/file_upload.h"
+#include "ui/widgets/buttons.h"
+#include "styles/style_boxes.h"
 
-PhotoCropBox::PhotoCropBox(const QImage &img, const PeerId &peer) : _downState(0),
-	_sendButton(this, lang(lng_settings_save), st::btnSelectDone),
-	_cancelButton(this, lang(lng_cancel), st::btnSelectCancel),
-    _img(img), _peerId(peer), a_opacity(0, 1) {
+PhotoCropBox::PhotoCropBox(QWidget*, const QImage &img, const PeerId &peer)
+: _img(img)
+, _peerId(peer) {
+	init(img, nullptr);
+}
 
-	connect(&_sendButton, SIGNAL(clicked()), this, SLOT(onSend()));
-	connect(&_cancelButton, SIGNAL(clicked()), this, SLOT(onCancel()));
-	if (_peerId) {
-		connect(this, SIGNAL(ready(const QImage &)), this, SLOT(onReady(const QImage &)));
+PhotoCropBox::PhotoCropBox(QWidget*, const QImage &img, PeerData *peer)
+: _img(img)
+, _peerId(peer->id) {
+	init(img, peer);
+}
+
+void PhotoCropBox::init(const QImage &img, PeerData *peer) {
+	if (peerIsChat(_peerId) || (peer && peer->isMegagroup())) {
+		_title = lang(lng_create_group_crop);
+	} else if (peerIsChannel(_peerId)) {
+		_title = lang(lng_create_channel_crop);
+	} else {
+		_title = lang(lng_settings_crop_profile);
+	}
+}
+
+void PhotoCropBox::prepare() {
+	addButton(lang(lng_settings_save), [this] { sendPhoto(); });
+	addButton(lang(lng_cancel), [this] { closeBox(); });
+	if (peerToBareInt(_peerId)) {
+		connect(this, SIGNAL(ready(const QImage&)), this, SLOT(onReady(const QImage&)));
 	}
 
-	int32 s = st::cropBoxWidth - st::boxPadding.left() - st::boxPadding.right();
-	_thumb = QPixmap::fromImage(img.scaled(s, s, Qt::KeepAspectRatio, Qt::SmoothTransformation), Qt::ColorOnly);
-	_thumbw = _thumb.width();
-	_thumbh = _thumb.height();
+	int32 s = st::boxWideWidth - st::boxPhotoPadding.left() - st::boxPhotoPadding.right();
+	_thumb = App::pixmapFromImageInPlace(_img.scaled(s * cIntRetinaFactor(), s * cIntRetinaFactor(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+	_thumb.setDevicePixelRatio(cRetinaFactor());
+	_mask = QImage(_thumb.size(), QImage::Format_ARGB32_Premultiplied);
+	_mask.setDevicePixelRatio(cRetinaFactor());
+	_fade = QImage(_thumb.size(), QImage::Format_ARGB32_Premultiplied);
+	_fade.setDevicePixelRatio(cRetinaFactor());
+	_thumbw = _thumb.width() / cIntRetinaFactor();
+	_thumbh = _thumb.height() / cIntRetinaFactor();
 	if (_thumbw > _thumbh) {
 		_cropw = _thumbh - 20;
 	} else {
@@ -47,29 +73,27 @@ PhotoCropBox::PhotoCropBox(const QImage &img, const PeerId &peer) : _downState(0
 	}
 	_cropx = (_thumbw - _cropw) / 2;
 	_cropy = (_thumbh - _cropw) / 2;
-	_width = st::cropBoxWidth;
-	_height = _thumbh + st::boxPadding.top() + st::boxFont->height + st::boxPadding.top() + st::boxPadding.bottom() + _sendButton.height();
-	_thumbx = (_width - _thumbw) / 2;
-	_thumby = st::boxPadding.top() * 2 + st::boxFont->height;
+
+	_thumbx = (st::boxWideWidth - _thumbw) / 2;
+	_thumby = st::boxPhotoPadding.top();
 	setMouseTracking(true);
 
-	resize(_width, _height);
+	setDimensions(st::boxWideWidth, st::boxPhotoPadding.top() + _thumbh + st::boxPhotoPadding.bottom() + st::boxTextFont->height + st::cropSkip);
 }
 
 void PhotoCropBox::mousePressEvent(QMouseEvent *e) {
-	if (e->button() != Qt::LeftButton) return LayeredWidget::mousePressEvent(e);
-
-	_downState = mouseState(e->pos());
-	_fromposx = e->pos().x();
-	_fromposy = e->pos().y();
-	_fromcropx = _cropx;
-	_fromcropy = _cropy;
-	_fromcropw = _cropw;
-
-	return LayeredWidget::mousePressEvent(e);
+	if (e->button() == Qt::LeftButton) {
+		_downState = mouseState(e->pos());
+		_fromposx = e->pos().x();
+		_fromposy = e->pos().y();
+		_fromcropx = _cropx;
+		_fromcropy = _cropy;
+		_fromcropw = _cropw;
+	}
+	return BoxContent::mousePressEvent(e);
 }
 
-int32 PhotoCropBox::mouseState(QPoint p) {
+int PhotoCropBox::mouseState(QPoint p) {
 	p -= QPoint(_thumbx, _thumby);
 	int32 delta = st::cropPointSize, mdelta(-delta / 2);
 	if (QRect(_cropx + mdelta, _cropy + mdelta, delta, delta).contains(p)) {
@@ -195,73 +219,45 @@ void PhotoCropBox::mouseMoveEvent(QMouseEvent *e) {
 
 void PhotoCropBox::keyPressEvent(QKeyEvent *e) {
 	if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
-		onSend();
-	} else if (e->key() == Qt::Key_Escape) {
-		onCancel();
+		sendPhoto();
+	} else {
+		BoxContent::keyPressEvent(e);
 	}
-}
-
-void PhotoCropBox::parentResized() {
-	QSize s = parentWidget()->size();
-	setGeometry((s.width() - _width) / 2, (s.height() - _height) / 2, _width, _height);
-	_sendButton.move(_width - _sendButton.width(), _height - _sendButton.height());
-	_cancelButton.move(0, _height - _cancelButton.height());
-	update();
 }
 
 void PhotoCropBox::paintEvent(QPaintEvent *e) {
-	QPainter p(this);
-	p.setOpacity(a_opacity.current());
-	
-	// fill bg
-	p.fillRect(QRect(QPoint(0, 0), size()), st::boxBG->b);
+	BoxContent::paintEvent(e);
 
-	// paint shadows
-	p.fillRect(0, _height - st::btnSelectCancel.height - st::scrollDef.bottomsh, _width, st::scrollDef.bottomsh, st::scrollDef.shColor->b);
+	Painter p(this);
 
-	// paint button sep
-	p.fillRect(st::btnSelectCancel.width, _height - st::btnSelectCancel.height, st::lineWidth, st::btnSelectCancel.height, st::btnSelectSep->b);
-
-	p.setFont(st::boxFont->f);
-	p.setPen(st::boxGrayTitle->p);
-	p.drawText(QRect(st::boxPadding.left(), st::boxPadding.top(), _width - st::boxPadding.left() - st::boxPadding.right(), st::boxFont->height), lang(lng_settings_crop_profile), style::al_center);
+	p.setFont(st::boxTextFont);
+	p.setPen(st::boxPhotoTextFg);
+	p.drawText(QRect(st::boxPhotoPadding.left(), st::boxPhotoPadding.top() + _thumbh + st::boxPhotoPadding.bottom(), width() - st::boxPhotoPadding.left() - st::boxPhotoPadding.right(), st::boxTextFont->height), _title, style::al_top);
 
 	p.translate(_thumbx, _thumby);
 	p.drawPixmap(0, 0, _thumb);
-	p.setOpacity(a_opacity.current() * 0.5);
-	if (_cropy > 0) {
-		p.fillRect(QRect(0, 0, _cropx + _cropw, _cropy), st::black->b);
-	}
-	if (_cropx + _cropw < _thumbw) {
-		p.fillRect(QRect(_cropx + _cropw, 0, _thumbw - _cropx - _cropw, _cropy + _cropw), st::black->b);
-	}
-	if (_cropy + _cropw < _thumbh) {
-		p.fillRect(QRect(_cropx, _cropy + _cropw, _thumbw - _cropx, _thumbh - _cropy - _cropw), st::black->b);
-	}
-	if (_cropx > 0) {
-		p.fillRect(QRect(0, _cropy, _cropx, _thumbh - _cropy), st::black->b);
-	}
+	_mask.fill(Qt::white);
+	{
+		Painter p(&_mask);
+		PainterHighQualityEnabler hq(p);
 
-	int32 delta = st::cropPointSize, mdelta(-delta / 2);
-	p.fillRect(QRect(_cropx + mdelta, _cropy + mdelta, delta, delta), st::white->b);
-	p.fillRect(QRect(_cropx + _cropw + mdelta, _cropy + mdelta, delta, delta), st::white->b);
-	p.fillRect(QRect(_cropx + _cropw + mdelta, _cropy + _cropw + mdelta, delta, delta), st::white->b);
-	p.fillRect(QRect(_cropx + mdelta, _cropy + _cropw + mdelta, delta, delta), st::white->b);
+		p.setPen(Qt::NoPen);
+		p.setBrush(Qt::black);
+		p.drawEllipse(_cropx, _cropy, _cropw, _cropw);
+	}
+	style::colorizeImage(_mask, st::photoCropFadeBg->c, &_fade);
+	p.drawImage(0, 0, _fade);
+
+	int delta = st::cropPointSize;
+	int mdelta = -delta / 2;
+	p.fillRect(QRect(_cropx + mdelta, _cropy + mdelta, delta, delta), st::photoCropPointFg);
+	p.fillRect(QRect(_cropx + _cropw + mdelta, _cropy + mdelta, delta, delta), st::photoCropPointFg);
+	p.fillRect(QRect(_cropx + _cropw + mdelta, _cropy + _cropw + mdelta, delta, delta), st::photoCropPointFg);
+	p.fillRect(QRect(_cropx + mdelta, _cropy + _cropw + mdelta, delta, delta), st::photoCropPointFg);
 }
 
-void PhotoCropBox::animStep(float64 ms) {
-	if (ms >= 1) {
-		a_opacity.finish();
-	} else {
-		a_opacity.update(ms, anim::linear);
-	}
-	_sendButton.setOpacity(a_opacity.current());
-	_cancelButton.setOpacity(a_opacity.current());
-	update();
-}
-
-void PhotoCropBox::onSend() {
-	QImage from(_img);
+void PhotoCropBox::sendPhoto() {
+	auto from = _img;
 	if (_img.width() < _thumb.width()) {
 		from = _thumb.toImage();
 	}
@@ -280,7 +276,11 @@ void PhotoCropBox::onSend() {
 		iw = from.height() - iy;
 	}
 	int32 offset = ix * from.depth() / 8 + iy * from.bytesPerLine();
-	QImage cropped(from.bits() + offset, iw, iw, from.bytesPerLine(), from.format()), tosend;
+	QImage cropped(from.constBits() + offset, iw, iw, from.bytesPerLine(), from.format()), tosend;
+	if (from.format() == QImage::Format_Indexed8) {
+		cropped.setColorCount(from.colorCount());
+		cropped.setColorTable(from.colorTable());
+	}
 	if (cropped.width() > 1280) {
 		tosend = cropped.scaled(1280, 1280, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 	} else if (cropped.width() < 320) {
@@ -290,21 +290,9 @@ void PhotoCropBox::onSend() {
 	}
 
 	emit ready(tosend);
+	closeBox();
 }
 
 void PhotoCropBox::onReady(const QImage &tosend) {
 	App::app()->uploadProfilePhoto(tosend, _peerId);
-	emit closed();
-}
-
-void PhotoCropBox::onCancel() {
-	emit closed();
-}
-
-void PhotoCropBox::startHide() {
-	_hiding = true;
-	a_opacity.start(0);
-}
-
-PhotoCropBox::~PhotoCropBox() {
 }

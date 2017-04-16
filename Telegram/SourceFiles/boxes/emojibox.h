@@ -12,55 +12,40 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include "layerwidget.h"
+#include "boxes/abstractbox.h"
 
-class EmojiBox : public LayeredWidget {
-	Q_OBJECT
-
+class EmojiBox : public BoxContent {
 public:
+	EmojiBox(QWidget*);
 
-	EmojiBox();
-	void parentResized();
-	void animStep(float64 ms);
-	void keyPressEvent(QKeyEvent *e);
-	void paintEvent(QPaintEvent *e);
-	void startHide();
-	~EmojiBox();
+protected:
+	void prepare() override;
 
-public slots:
-
-	void onClose();
+	void keyPressEvent(QKeyEvent *e) override;
+	void paintEvent(QPaintEvent *e) override;
 
 private:
-
-	void hideAll();
-	void showAll();
-
 	void fillBlocks();
 
-	int32 _width, _height;
-	BottomButton _done;
-
-	Text _header;
+	int32 _esize;
 
 	int32 _blockHeight;
 	struct Block {
-		Block(const EmojiData *emoji = 0, const QString &text = QString()) : emoji(emoji), text(text) {
+		Block(EmojiPtr emoji = nullptr, const QString &text = QString()) : emoji(emoji), text(text) {
 		}
-		const EmojiData *emoji;
+		EmojiPtr emoji;
 		QString text;
 	};
 	typedef QVector<Block> BlockRow;
 	typedef QVector<BlockRow> Blocks;
 	Blocks _blocks;
 
-	bool _hiding;
-	QPixmap _cache;
-
-	anim::fvalue a_opacity;
 };

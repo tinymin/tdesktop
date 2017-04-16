@@ -12,37 +12,12 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
-#include <QtCore/QtPlugin>
 
-#ifdef Q_OS_WIN
-Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin)
-Q_IMPORT_PLUGIN(AccessibleFactory)
-Q_IMPORT_PLUGIN(QWebpPlugin)
-#elif defined Q_OS_MAC
-//Q_IMPORT_PLUGIN(AVFServicePlugin)
-Q_IMPORT_PLUGIN(AVFMediaPlayerServicePlugin)
-Q_IMPORT_PLUGIN(QT7ServicePlugin)
-Q_IMPORT_PLUGIN(AudioCaptureServicePlugin)
-//Q_IMPORT_PLUGIN(CoreAudioPlugin)
-Q_IMPORT_PLUGIN(QM3uPlaylistPlugin)
-Q_IMPORT_PLUGIN(AccessibleFactory)
-Q_IMPORT_PLUGIN(QCoreWlanEnginePlugin)
-Q_IMPORT_PLUGIN(QGenericEnginePlugin)
-Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin)
-Q_IMPORT_PLUGIN(QDDSPlugin)
-Q_IMPORT_PLUGIN(QICNSPlugin)
-Q_IMPORT_PLUGIN(QICOPlugin)
-Q_IMPORT_PLUGIN(QJp2Plugin)
-Q_IMPORT_PLUGIN(QMngPlugin)
-Q_IMPORT_PLUGIN(QTgaPlugin)
-Q_IMPORT_PLUGIN(QTiffPlugin)
-Q_IMPORT_PLUGIN(QWbmpPlugin)
-Q_IMPORT_PLUGIN(QWebpPlugin)
-#elif defined Q_OS_LINUX
-Q_IMPORT_PLUGIN(QComposePlatformInputContextPlugin)
-Q_IMPORT_PLUGIN(QWebpPlugin)
-#endif
+// Precompiled header helper.

@@ -12,47 +12,84 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include "layerwidget.h"
-#include "gui/phoneinput.h"
+#include "boxes/abstractbox.h"
 
-class ConnectionBox : public LayeredWidget {
+namespace Ui {
+class InputField;
+class PortInput;
+class PasswordInput;
+class Checkbox;
+template <typename Enum>
+class RadioenumGroup;
+template <typename Enum>
+class Radioenum;
+} // namespace Ui
+
+class ConnectionBox : public BoxContent {
 	Q_OBJECT
 
 public:
+	ConnectionBox(QWidget *parent);
 
-	ConnectionBox();
-	void parentResized();
-	void animStep(float64 dt);
-	void keyPressEvent(QKeyEvent *e);
-	void paintEvent(QPaintEvent *e);
-	void startHide();
-	~ConnectionBox();
+protected:
+	void prepare() override;
+	void setInnerFocus() override;
 
-public slots:
+	void resizeEvent(QResizeEvent *e) override;
 
-	void onChange();
+private slots:
+	void onSubmit();
 	void onSave();
-	void onCancel();
 
 private:
+	void typeChanged(DBIConnectionType type);
+	void updateControlsVisibility();
+	void updateControlsPosition();
 
-	void hideAll();
-	void showAll();
+	object_ptr<Ui::InputField> _hostInput;
+	object_ptr<Ui::PortInput> _portInput;
+	object_ptr<Ui::InputField> _userInput;
+	object_ptr<Ui::PasswordInput> _passwordInput;
+	std::shared_ptr<Ui::RadioenumGroup<DBIConnectionType>> _typeGroup;
+	object_ptr<Ui::Radioenum<DBIConnectionType>> _autoRadio;
+	object_ptr<Ui::Radioenum<DBIConnectionType>> _httpProxyRadio;
+	object_ptr<Ui::Radioenum<DBIConnectionType>> _tcpProxyRadio;
+	object_ptr<Ui::Checkbox> _tryIPv6;
 
-	FlatButton _saveButton, _cancelButton;
-	FlatInput _hostInput;
-	PortInput _portInput;
-	FlatInput _userInput, _passwordInput;
-	FlatRadiobutton _autoRadio, _httpProxyRadio, _tcpProxyRadio;
+};
 
-	int32 _width, _height;
-	QPixmap _cache;
+class AutoDownloadBox : public BoxContent {
+	Q_OBJECT
 
-	anim::fvalue a_opacity;
-	bool _hiding;
+public:
+	AutoDownloadBox(QWidget *parent);
+
+protected:
+	void prepare() override;
+
+	void paintEvent(QPaintEvent *e) override;
+	void resizeEvent(QResizeEvent *e) override;
+
+private slots:
+	void onSave();
+
+private:
+	object_ptr<Ui::Checkbox> _photoPrivate;
+	object_ptr<Ui::Checkbox> _photoGroups;
+	object_ptr<Ui::Checkbox> _audioPrivate;
+	object_ptr<Ui::Checkbox> _audioGroups;
+	object_ptr<Ui::Checkbox> _gifPrivate;
+	object_ptr<Ui::Checkbox> _gifGroups;
+	object_ptr<Ui::Checkbox> _gifPlay;
+
+	int _sectionHeight = 0;
+
 };

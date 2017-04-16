@@ -12,35 +12,45 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
 #include "lang.h"
 
-class LangLoaderRequest : public QMap <LangKey, bool> {
-public:
-	LangLoaderRequest() {
-	}
-	LangLoaderRequest(LangKey key1) {
-		insert(key1, true);
-	}
-	LangLoaderRequest(LangKey key1, LangKey key2) {
-		insert(key1, true);
-		insert(key2, true);
-	}
-	LangLoaderRequest(LangKey key1, LangKey key2, LangKey key3) {
-		insert(key1, true);
-		insert(key2, true);
-		insert(key3, true);
+using LangLoaderRequest = OrderedSet<LangKey>;
+
+template <typename ...Args>
+struct LangLoaderRequestHelper;
+
+template <>
+struct LangLoaderRequestHelper<> {
+	static inline void fill(LangLoaderRequest &result) {
 	}
 };
 
-typedef QMap<LangKey, QString> LangLoaderResult;
+template <typename Arg, typename ...Args>
+struct LangLoaderRequestHelper<Arg, Args...> {
+	static inline void fill(LangLoaderRequest &result, Arg arg, Args ...args) {
+		result.insert(arg);
+		LangLoaderRequestHelper<Args...>::fill(result, args...);
+	}
+};
+
+template <typename ...Args>
+inline LangLoaderRequest langLoaderRequest(Args ...args) {
+	LangLoaderRequest result;
+	LangLoaderRequestHelper<Args...>::fill(result, args...);
+	return result;
+}
+
+using LangLoaderResult = QMap<LangKey, LangString>;
 class LangLoaderPlain : public LangLoader {
 public:
-
 	LangLoaderPlain(const QString &file, const LangLoaderRequest &request = LangLoaderRequest());
 
 	LangLoaderResult found() const {
@@ -48,7 +58,6 @@ public:
 	}
 
 protected:
-
 	QString file;
 	LangLoaderRequest request;
 

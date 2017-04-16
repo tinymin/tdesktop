@@ -12,8 +12,11 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #include <cstdio>
 #include <sys/stat.h>
@@ -49,12 +52,13 @@ bool do_mkdir(const char *path) { // from http://stackoverflow.com/questions/675
 }
 
 bool _debug = false;
+string exeName, exeDir, workDir;
 
 FILE *_logFile = 0;
 void openLog() {
     if (!_debug || _logFile) return;
 
-    if (!do_mkdir("DebugLogs")) {
+    if (!do_mkdir((workDir + "DebugLogs").c_str())) {
         return;
     }
 
@@ -65,7 +69,7 @@ void openLog() {
 
     static const int maxFileLen = 65536;
     char logName[maxFileLen];
-    sprintf(logName, "DebugLogs/%04d%02d%02d_%02d%02d%02d_upd.txt",
+    sprintf(logName, "%sDebugLogs/%04d%02d%02d_%02d%02d%02d_upd.txt", workDir.c_str(),
         t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
     _logFile = fopen(logName, "w");
 }
@@ -136,7 +140,7 @@ bool remove_directory(const string &path) { // from http://stackoverflow.com/que
 
     if (!d) {
         writeLog("Could not open dir '%s'", path.c_str());
-        return false;
+        return (errno == ENOENT);
     }
 
     while (struct dirent *p = readdir(d)) {
@@ -192,8 +196,6 @@ bool mkpath(const char *path) {
     return do_mkdir(path);
 }
 
-string exeName, exeDir, workDir;
-
 bool equal(string a, string b) {
     std::transform(a.begin(), a.end(), a.begin(), ::tolower);
     std::transform(b.begin(), b.end(), b.begin(), ::tolower);
@@ -201,18 +203,33 @@ bool equal(string a, string b) {
 }
 
 void delFolder() {
-    string delPath = workDir + "tupdates/ready", delFolder = workDir + "tupdates";
-    writeLog("Fully clearing path '%s'..", delPath.c_str());
-    if (!remove_directory(delPath)) {
-        writeLog("Error: failed to clear path! :(");
+    string delPathOld = workDir + "tupdates/ready", delPath = workDir + "tupdates/temp", delFolder = workDir + "tupdates";
+    writeLog("Fully clearing old path '%s'..", delPathOld.c_str());
+    if (!remove_directory(delPathOld)) {
+        writeLog("Failed to clear old path! :( New path was used?..");
     }
-    rmdir(delFolder.c_str());
+	writeLog("Fully clearing path '%s'..", delPath.c_str());
+	if (!remove_directory(delPath)) {
+		writeLog("Error: failed to clear path! :(");
+	}
+	rmdir(delFolder.c_str());
 }
 
 bool update() {
     writeLog("Update started..");
 
-    string updDir = workDir + "tupdates/ready";
+    string updDir = workDir + "tupdates/temp", readyFilePath = workDir + "tupdates/temp/ready", tdataDir = workDir + "tupdates/temp/tdata";
+	{
+		FILE *readyFile = fopen(readyFilePath.c_str(), "rb");
+		if (readyFile) {
+			fclose(readyFile);
+            writeLog("Ready file found! Using new path '%s'..", updDir.c_str());
+        } else {
+            updDir = workDir + "tupdates/ready"; // old
+            tdataDir = workDir + "tupdates/ready/tdata";
+            writeLog("Ready file not found! Using old path '%s'..", updDir.c_str());
+        }
+	}
 
     deque<string> dirs;
 	dirs.push_back(updDir);
@@ -242,7 +259,9 @@ bool update() {
 
             string fname = dir + '/' + p->d_name;
             struct stat statbuf;
-            if (!stat(fname.c_str(), &statbuf)) {
+            if (fname.substr(0, tdataDir.size()) == tdataDir && (fname.size() <= tdataDir.size() || fname.at(tdataDir.size()) == '/')) {
+                writeLog("Skipping 'tdata' path '%s'", fname.c_str());
+            } else if (!stat(fname.c_str(), &statbuf)) {
                 if (S_ISDIR(statbuf.st_mode)) {
                     dirs.push_back(fname);
                     writeLog("Added dir '%s' in update tree..", fname.c_str());
@@ -253,9 +272,13 @@ bool update() {
                         delFolder();
                         return false;
                     }
-                    from.push_back(fname);
-                    to.push_back(tofname);
-                    writeLog("Added file '%s' to be copied to '%s'", fname.c_str(), tofname.c_str());
+					if (fname == readyFilePath) {
+						writeLog("Skipped ready file '%s'", fname.c_str());
+                    } else {
+						from.push_back(fname);
+						to.push_back(tofname);
+						writeLog("Added file '%s' to be copied to '%s'", fname.c_str(), tofname.c_str());
+					}
                 }
             } else {
                 writeLog("Could not get stat() for file %s", fname.c_str());
@@ -299,28 +322,35 @@ bool update() {
 }
 
 int main(int argc, char *argv[]) {
-    openLog();
+    bool needupdate = true, autostart = false, debug = false, tosettings = false, startintray = false, testmode = false;
 
-    writeLog("Updater started..");
-
-    bool needupdate = true, autostart = false, debug = false, tosettings = false;
-
-    char *key = 0;
+    char *key = 0, *crashreport = 0;
     for (int i = 1; i < argc; ++i) {
         if (equal(argv[i], "-noupdate")) {
             needupdate = false;
         } else if (equal(argv[i], "-autostart")) {
             autostart = true;
-        } else if (equal(argv[i], "-debug")) {
-            debug = _debug = true;
-            openLog();
+		} else if (equal(argv[i], "-debug")) {
+			debug = _debug = true;
+		} else if (equal(argv[i], "-startintray")) {
+			startintray = true;
+		} else if (equal(argv[i], "-testmode")) {
+			testmode = true;
         } else if (equal(argv[i], "-tosettings")) {
             tosettings = true;
         } else if (equal(argv[i], "-key") && ++i < argc) {
             key = argv[i];
         } else if (equal(argv[i], "-workpath") && ++i < argc) {
             workDir = argv[i];
-        }
+		} else if (equal(argv[i], "-crashreport") && ++i < argc) {
+			crashreport = argv[i];
+		}
+    }
+    openLog();
+
+    writeLog("Updater started..");
+    for (int i = 0; i < argc; ++i) {
+        writeLog("Argument: '%s'", argv[i]);
     }
     if (needupdate) writeLog("Need to update!");
     if (autostart) writeLog("From autostart!");
@@ -332,7 +362,7 @@ int main(int argc, char *argv[]) {
             exeDir = exeName.substr(0, exeName.size() - 7);
             writeLog("Exe dir is: %s", exeDir.c_str());
             if (needupdate) {
-                if (workDir.empty()) { // old app launched
+                if (workDir.empty()) { // old app launched, update prepared in tupdates/ready (not in tupdates/temp)
                     writeLog("No workdir, trying to figure it out");
                     struct passwd *pw = getpwuid(getuid());
                     if (pw && pw->pw_dir && strlen(pw->pw_dir)) {
@@ -377,25 +407,30 @@ int main(int argc, char *argv[]) {
     char path[MaxLen] = {0};
     strcpy(path, (exeDir + "Telegram").c_str());
 
-    char *args[MaxArgsCount] = {0}, p_noupdate[] = "-noupdate", p_autostart[] = "-autostart", p_debug[] = "-debug", p_tosettings[] = "-tosettings", p_key[] = "-key";
+    char *args[MaxArgsCount] = {0}, p_noupdate[] = "-noupdate", p_autostart[] = "-autostart", p_debug[] = "-debug", p_tosettings[] = "-tosettings", p_key[] = "-key", p_startintray[] = "-startintray", p_testmode[] = "-testmode";
     int argIndex = 0;
     args[argIndex++] = path;
-    args[argIndex++] = p_noupdate;
-    if (autostart) args[argIndex++] = p_autostart;
-    if (debug) args[argIndex++] = p_debug;
-    if (tosettings) args[argIndex++] = p_tosettings;
-    if (key) {
-        args[argIndex++] = p_key;
-        args[argIndex++] = key;
-    }
-
+	if (crashreport) {
+		args[argIndex++] = crashreport;
+	} else {
+		args[argIndex++] = p_noupdate;
+		if (autostart) args[argIndex++] = p_autostart;
+		if (debug) args[argIndex++] = p_debug;
+		if (startintray) args[argIndex++] = p_startintray;
+		if (testmode) args[argIndex++] = p_testmode;
+		if (tosettings) args[argIndex++] = p_tosettings;
+		if (key) {
+			args[argIndex++] = p_key;
+			args[argIndex++] = key;
+		}
+	}
     pid_t pid = fork();
     switch (pid) {
     case -1: writeLog("fork() failed!"); return 1;
     case 0: execv(path, args); return 1;
     }
 
-    writeLog("Executed Telegram, closing log and quiting..");
+    writeLog("Executed Telegram, closing log and quitting..");
 	closeLog();
 
 	return 0;

@@ -12,14 +12,18 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #import <Cocoa/Cocoa.h>
 
 NSString *appName = @"Telegram.app";
 NSString *appDir = nil;
 NSString *workDir = nil;
+NSString *crashReportArg = nil;
 
 #ifdef _DEBUG
 BOOL _debug = YES;
@@ -35,7 +39,7 @@ void openLog() {
 		return;
 	}
 
-	NSDateFormatter *fmt = [[NSDateFormatter alloc] initWithDateFormat:@"DebugLogs/%Y%m%d %H%M%S_upd.txt" allowNaturalLanguage:NO];
+	NSDateFormatter *fmt = [[NSDateFormatter alloc] initWithDateFormat:@"DebugLogs/%Y%m%d_%H%M%S_upd.txt" allowNaturalLanguage:NO];
 	NSString *logPath = [workDir stringByAppendingString:[fmt stringFromDate:[NSDate date]]];
 	[[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil];
 	_logFile = [NSFileHandle fileHandleForWritingAtPath:logPath];
@@ -55,7 +59,14 @@ void writeLog(NSString *msg) {
 }
 
 void delFolder() {
-	[[NSFileManager defaultManager] removeItemAtPath:[workDir stringByAppendingString:@"tupdates/ready"] error:nil];
+	writeLog([@"Fully clearing old path: " stringByAppendingString:[workDir stringByAppendingString:@"tupdates/ready"]]);
+	if (![[NSFileManager defaultManager] removeItemAtPath:[workDir stringByAppendingString:@"tupdates/ready"] error:nil]) {
+		writeLog(@"Failed to clear old path! :( New path was used?..");
+	}
+	writeLog([@"Fully clearing new path: " stringByAppendingString:[workDir stringByAppendingString:@"tupdates/temp"]]);
+	if (![[NSFileManager defaultManager] removeItemAtPath:[workDir stringByAppendingString:@"tupdates/temp"] error:nil]) {
+		writeLog(@"Error: failed to clear new path! :(");
+	}
 	rmdir([[workDir stringByAppendingString:@"tupdates"] fileSystemRepresentation]);
 }
 
@@ -78,7 +89,7 @@ int main(int argc, const char * argv[]) {
 
 	openLog();
 	pid_t procId = 0;
-	BOOL update = YES, toSettings = NO, autoStart = NO;
+	BOOL update = YES, toSettings = NO, autoStart = NO, startInTray = NO, testMode = NO;
 	NSString *key = nil;
 	for (int i = 0; i < argc; ++i) {
 		if ([@"-workpath" isEqualToString:[NSString stringWithUTF8String:argv[i]]]) {
@@ -91,6 +102,10 @@ int main(int argc, const char * argv[]) {
 				[formatter setNumberStyle:NSNumberFormatterDecimalStyle];
 				procId = [[formatter numberFromString:[NSString stringWithUTF8String:argv[i]]] intValue];
 			}
+		} else if ([@"-crashreport" isEqualToString:[NSString stringWithUTF8String:argv[i]]]) {
+			if (++i < argc) {
+				crashReportArg = [NSString stringWithUTF8String:argv[i]];
+			}
 		} else if ([@"-noupdate" isEqualToString:[NSString stringWithUTF8String:argv[i]]]) {
 			update = NO;
 		} else if ([@"-tosettings" isEqualToString:[NSString stringWithUTF8String:argv[i]]]) {
@@ -99,6 +114,10 @@ int main(int argc, const char * argv[]) {
 			autoStart = YES;
 		} else if ([@"-debug" isEqualToString:[NSString stringWithUTF8String:argv[i]]]) {
 			_debug = YES;
+		} else if ([@"-startintray" isEqualToString:[NSString stringWithUTF8String:argv[i]]]) {
+			startInTray = YES;
+		} else if ([@"-testmode" isEqualToString:[NSString stringWithUTF8String:argv[i]]]) {
+			testMode = YES;
 		} else if ([@"-key" isEqualToString:[NSString stringWithUTF8String:argv[i]]]) {
 			if (++i < argc) key = [NSString stringWithUTF8String:argv[i]];
 		}
@@ -128,16 +147,49 @@ int main(int argc, const char * argv[]) {
 	}
 
 	if (update) {
-		writeLog(@"Starting update files iteration!");
-
 		NSFileManager *fileManager = [NSFileManager defaultManager];
-		NSString *srcDir = [workDir stringByAppendingString:@"tupdates/ready/"];
+		NSString *readyFilePath = [workDir stringByAppendingString:@"tupdates/temp/ready"];
+		NSString *srcDir = [workDir stringByAppendingString:@"tupdates/temp/"], *srcEnum = [workDir stringByAppendingString:@"tupdates/temp"];
+		if ([fileManager fileExistsAtPath:readyFilePath]) {
+			writeLog([@"Ready file found! Using new path: " stringByAppendingString: srcEnum]);
+		} else {
+			srcDir = [workDir stringByAppendingString:@"tupdates/ready/"]; // old
+			srcEnum = [workDir stringByAppendingString:@"tupdates/ready"];
+			writeLog([@"Ready file not found! Using old path: " stringByAppendingString: srcEnum]);
+		}
+
+		writeLog([@"Starting update files iteration, path: " stringByAppendingString: srcEnum]);
+
+		// Take the Updater (this currently running binary) from the place where it was placed by Telegram
+		// and copy it to the folder with the new version of the app (ready),
+		// so it won't be deleted when we will clear the "Telegram.app/Contents" folder.
+		NSString *oldVersionUpdaterPath = [appDirFull stringByAppendingString: @"/Contents/Frameworks/Updater" ];
+		NSString *newVersionUpdaterPath = [srcEnum stringByAppendingString:[[NSArray arrayWithObjects:@"/", appName, @"/Contents/Frameworks/Updater", nil] componentsJoinedByString:@""]];
+		writeLog([[NSArray arrayWithObjects: @"Copying Updater from old path ", oldVersionUpdaterPath, @" to new path ", newVersionUpdaterPath, nil] componentsJoinedByString:@""]);
+		if (![fileManager fileExistsAtPath:newVersionUpdaterPath]) {
+			if (![fileManager copyItemAtPath:oldVersionUpdaterPath toPath:newVersionUpdaterPath error:nil]) {
+				writeLog([[NSArray arrayWithObjects: @"Failed to copy file from ", oldVersionUpdaterPath, @" to ", newVersionUpdaterPath, nil] componentsJoinedByString:@""]);
+				delFolder();
+				return -1;
+			}
+		}
+
+
+		NSString *contentsPath = [appDirFull stringByAppendingString: @"/Contents"];
+		writeLog([[NSArray arrayWithObjects: @"Clearing dir ", contentsPath, nil] componentsJoinedByString:@""]);
+		if (![fileManager removeItemAtPath:contentsPath error:nil]) {
+			writeLog([@"Failed to clear path for directory " stringByAppendingString:contentsPath]);
+			delFolder();
+			return -1;
+		}
+
 		NSArray *keys = [NSArray arrayWithObject:NSURLIsDirectoryKey];
 		NSDirectoryEnumerator *enumerator = [fileManager
-											 enumeratorAtURL:[NSURL fileURLWithPath:[workDir stringByAppendingString:@"tupdates/ready"]]
+											 enumeratorAtURL:[NSURL fileURLWithPath:srcEnum]
 											 includingPropertiesForKeys:keys
 											 options:0
 											 errorHandler:^(NSURL *url, NSError *error) {
+												 writeLog([[[@"Error in enumerating " stringByAppendingString:[url absoluteString]] stringByAppendingString: @" error is: "] stringByAppendingString: [error description]]);
 												 return NO;
 											 }];
 		for (NSURL *url in enumerator) {
@@ -158,18 +210,20 @@ int main(int argc, const char * argv[]) {
 			NSString *dstPath = [appDirFull stringByAppendingString:[pathPart substringFromIndex:r.length]];
 			NSError *error;
 			NSNumber *isDirectory = nil;
-			writeLog([[NSArray arrayWithObjects: @"Copying file ", srcPath, @" to ", dstPath, nil] componentsJoinedByString:@""]);
 			if (![url getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:&error]) {
 				writeLog([@"Failed to get IsDirectory for file " stringByAppendingString:[url path]]);
 				delFolder();
 				break;
 			}
 			if ([isDirectory boolValue]) {
+				writeLog([[NSArray arrayWithObjects: @"Copying dir ", srcPath, @" to ", dstPath, nil] componentsJoinedByString:@""]);
 				if (![fileManager createDirectoryAtPath:dstPath withIntermediateDirectories:YES attributes:nil error:nil]) {
 					writeLog([@"Failed to force path for directory " stringByAppendingString:dstPath]);
 					delFolder();
 					break;
 				}
+			} else if ([srcPath isEqualToString:readyFilePath]) {
+				writeLog([[NSArray arrayWithObjects: @"Skipping ready file ", srcPath, nil] componentsJoinedByString:@""]);
 			} else if ([fileManager fileExistsAtPath:dstPath]) {
 				if (![[NSData dataWithContentsOfFile:srcPath] writeToFile:dstPath atomically:YES]) {
 					writeLog([@"Failed to edit file " stringByAppendingString:dstPath]);
@@ -188,13 +242,17 @@ int main(int argc, const char * argv[]) {
 	}
 
 	NSString *appPath = [[NSArray arrayWithObjects:appDir, appRealName, nil] componentsJoinedByString:@""];
-	NSMutableArray *args = [[NSMutableArray alloc] initWithObjects:@"-noupdate", nil];
-	if (toSettings) [args addObject:@"-tosettings"];
-	if (_debug) [args addObject:@"-debug"];
-	if (autoStart) [args addObject:@"-autostart"];
-	if (key) {
-		[args addObject:@"-key"];
-		[args addObject:key];
+	NSMutableArray *args = [[NSMutableArray alloc] initWithObjects: crashReportArg ? crashReportArg : @"-noupdate", nil];
+	if (!crashReportArg) {
+		if (toSettings) [args addObject:@"-tosettings"];
+		if (_debug) [args addObject:@"-debug"];
+		if (startInTray) [args addObject:@"-startintray"];
+		if (testMode) [args addObject:@"-testmode"];
+		if (autoStart) [args addObject:@"-autostart"];
+		if (key) {
+			[args addObject:@"-key"];
+			[args addObject:key];
+		}
 	}
 	writeLog([[NSArray arrayWithObjects:@"Running application '", appPath, @"' with args '", [args componentsJoinedByString:@"' '"], @"'..", nil] componentsJoinedByString:@""]);
 	NSError *error = nil;

@@ -12,36 +12,54 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include <QtWidgets/QWidget>
-#include "gui/flatbutton.h"
-#include "gui/phoneinput.h"
-#include "gui/countrycodeinput.h"
-#include "gui/countryinput.h"
-#include "intro.h"
+#include "ui/countryinput.h"
+#include "intro/introwidget.h"
 
-class IntroPhone : public IntroStage, public Animated, public RPCSender {
+namespace Ui {
+class PhonePartInput;
+class CountryCodeInput;
+class RoundButton;
+class FlatLabel;
+} // namespace Ui
+
+namespace Intro {
+
+class PhoneWidget : public Widget::Step {
 	Q_OBJECT
 
 public:
-
-	IntroPhone(IntroWidget *parent);
-
-	void paintEvent(QPaintEvent *e);
-	void resizeEvent(QResizeEvent *e);
-
-	bool animStep(float64 ms);
+	PhoneWidget(QWidget *parent, Widget::Data *data);
 
 	void selectCountry(const QString &country);
 
-	void activate();
-	void deactivate();
-	void onNext();
-	void onBack();
+	void setInnerFocus() override;
+	void activate() override;
+	void finished() override;
+	void cancelled() override;
+	void submit() override;
+
+	bool hasBack() const override {
+		return true;
+	}
+
+protected:
+	void resizeEvent(QResizeEvent *e) override;
+
+private slots:
+	void onInputChange();
+	void onCheckRequest();
+
+private:
+	void updateSignupGeometry();
+	void countryChanged();
 
 	void phoneCheckDone(const MTPauth_CheckedPhone &result);
 	void phoneSubmitDone(const MTPauth_SentCode &result);
@@ -49,41 +67,26 @@ public:
 
 	void toSignUp();
 
-public slots:
-
-	void countryChanged();
-	void onSelectClose();
-	void onInputChange();
-	void onSubmitPhone(bool force = false);
-	void onCheckRequest();
-
-private:
-
 	QString fullNumber() const;
-	void disableAll();
-	void enableAll(bool failed);
 	void stopCheck();
 
-	void showError(const QString &err, bool signUp = false);
+	void showPhoneError(const QString &text);
+	void hidePhoneError();
+	void showSignup();
 
-	QString error;
-	anim::fvalue errorAlpha;
+	bool _changed = false;
 
-	bool changed;
-	FlatButton next;
+	object_ptr<CountryInput> _country;
+	object_ptr<Ui::CountryCodeInput> _code;
+	object_ptr<Ui::PhonePartInput> _phone;
 
-	QRect textRect;
+	object_ptr<Ui::WidgetFadeWrap<Ui::FlatLabel>> _signup = { nullptr };
 
-	CountryInput country;
-	PhoneInput phone;
-	CountryCodeInput code;
+	QString _sentPhone;
+	mtpRequestId _sentRequest = 0;
 
-	FlatLabel _signup;
-	QPixmap _signupCache;
-	bool _showSignup;
+	object_ptr<QTimer> _checkRequest;
 
-	QString sentPhone;
-	mtpRequestId sentRequest;
-
-	QTimer checkRequest;
 };
+
+} // namespace Intro

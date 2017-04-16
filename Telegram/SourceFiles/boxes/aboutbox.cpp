@@ -12,116 +12,101 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
-#include "stdafx.h"
+#include "boxes/aboutbox.h"
+
 #include "lang.h"
-
-#include "aboutbox.h"
 #include "mainwidget.h"
-#include "window.h"
+#include "mainwindow.h"
+#include "autoupdater.h"
+#include "boxes/confirmbox.h"
+#include "application.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
+#include "styles/style_boxes.h"
+#include "platform/platform_file_utilities.h"
 
-AboutBox::AboutBox() :
-_done(this, lang(lng_about_done), st::aboutCloseButton),
-_version(this, qsl("[a href=\"https://desktop.telegram.org/#changelog\"]") + textClean(lng_about_version(lt_version, QString::fromWCharArray(AppVersionStr))) + qsl("[/a]"), st::aboutVersion, st::defaultTextStyle),
-_text(this, lang(lng_about_text), st::aboutLabel, st::aboutTextStyle),
-_hiding(false), a_opacity(0, 1) {
-	
-	_width = st::aboutWidth;
-	_height = st::aboutHeight;
-
-	_version.move(0, st::aboutVersionTop);
-	_text.move(0, st::aboutTextTop);
-
-	_headerWidth = st::aboutHeaderFont->m.width(qsl("Telegram "));
-	_subheaderWidth = st::aboutSubheaderFont->m.width(qsl("Desktop"));
-
-	_done.move(0, _height - _done.height());
-
-	connect(&_done, SIGNAL(clicked()), this, SLOT(onClose()));
-
-	resize(_width, _height);
-
-	showAll();
-	_cache = myGrab(this, rect());
-	hideAll();
+AboutBox::AboutBox(QWidget *parent)
+: _version(this, lng_about_version(lt_version, QString::fromLatin1(AppVersionStr.c_str()) + (cAlphaVersion() ? " alpha" : "") + (cBetaVersion() ? qsl(" beta %1").arg(cBetaVersion()) : QString())), st::aboutVersionLink)
+, _text1(this, lang(lng_about_text_1), Ui::FlatLabel::InitType::Rich, st::aboutLabel)
+, _text2(this, lang(lng_about_text_2), Ui::FlatLabel::InitType::Rich, st::aboutLabel)
+, _text3(this, st::aboutLabel) {
 }
 
-void AboutBox::hideAll() {
-	_done.hide();
-	_version.hide();
-	_text.hide();
+void AboutBox::prepare() {
+	setTitle(qsl("Telegram Desktop"));
+
+	addButton(lang(lng_close), [this] { closeBox(); });
+
+	_text3->setRichText(lng_about_text_3(lt_faq_open, qsl("[a href=\"%1\"]").arg(telegramFaqLink()), lt_faq_close, qsl("[/a]")));
+
+	_version->setClickedCallback([this] { showVersionHistory(); });
+
+	setDimensions(st::aboutWidth, st::aboutTextTop + _text1->height() + st::aboutSkip + _text2->height() + st::aboutSkip + _text3->height());
 }
 
-void AboutBox::showAll() {
-	_done.show();
-	_version.show();
-	_text.show();
+void AboutBox::resizeEvent(QResizeEvent *e) {
+	BoxContent::resizeEvent(e);
+
+	_version->moveToLeft(st::boxPadding.left(), st::aboutVersionTop);
+	_text1->moveToLeft(st::boxPadding.left(), st::aboutTextTop);
+	_text2->moveToLeft(st::boxPadding.left(), _text1->y() + _text1->height() + st::aboutSkip);
+	_text3->moveToLeft(st::boxPadding.left(), _text2->y() + _text2->height() + st::aboutSkip);
+}
+
+void AboutBox::showVersionHistory() {
+	if (cRealBetaVersion()) {
+		auto url = qsl("https://tdesktop.com/");
+		switch (cPlatform()) {
+		case dbipWindows: url += qsl("win/%1.zip"); break;
+		case dbipMac: url += qsl("mac/%1.zip"); break;
+		case dbipMacOld: url += qsl("mac32/%1.zip"); break;
+		case dbipLinux32: url += qsl("linux32/%1.tar.xz"); break;
+		case dbipLinux64: url += qsl("linux/%1.tar.xz"); break;
+		}
+		url = url.arg(qsl("tbeta%1_%2").arg(cRealBetaVersion()).arg(countBetaVersionSignature(cRealBetaVersion())));
+
+		Application::clipboard()->setText(url);
+
+		Ui::show(Box<InformBox>("The link to the current private beta version of Telegram Desktop was copied to the clipboard."));
+	} else {
+		QDesktopServices::openUrl(qsl("https://desktop.telegram.org/changelog"));
+	}
 }
 
 void AboutBox::keyPressEvent(QKeyEvent *e) {
 	if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
-		onClose();
-	} else if (e->key() == Qt::Key_Escape) {
-		onClose();
-	}
-}
-
-void AboutBox::parentResized() {
-	QSize s = parentWidget()->size();
-	setGeometry((s.width() - _width) / 2, (s.height() - _height) / 2, _width, _height);
-	update();
-}
-
-void AboutBox::paintEvent(QPaintEvent *e) {
-	QPainter p(this);
-	if (_cache.isNull()) {
-		if (!_hiding || a_opacity.current() > 0.01) {
-			// fill bg
-			p.fillRect(0, 0, _width, _height, st::boxBG->b);
-
-			p.drawPixmap(QPoint((_width - st::aboutIcon.pxWidth()) / 2, st::aboutIconTop), App::sprite(), st::aboutIcon);
-
-			p.setPen(st::black->p);
-			p.setFont(st::aboutHeaderFont->f);
-            p.drawText((_width - (_headerWidth + _subheaderWidth)) / 2, st::aboutHeaderTop + st::aboutHeaderFont->ascent, qsl("Telegram"));
-
-			p.setFont(st::aboutSubheaderFont->f);
-            p.drawText((_width - (_headerWidth + _subheaderWidth)) / 2 + _headerWidth, st::aboutHeaderTop + st::aboutSubheaderFont->ascent, qsl("Desktop"));
-		}
+		closeBox();
 	} else {
-		p.setOpacity(a_opacity.current());
-		p.drawPixmap(0, 0, _cache);
+		BoxContent::keyPressEvent(e);
 	}
 }
 
-void AboutBox::animStep(float64 ms) {
-	if (ms >= 1) {
-		a_opacity.finish();
-		_cache = QPixmap();
-		if (!_hiding) {
-			showAll();
-			setFocus();
+QString telegramFaqLink() {
+	QString result = qsl("https://telegram.org/faq");
+	if (cLang() > languageDefault && cLang() < languageCount) {
+		const char *code = LanguageCodes[cLang()].c_str();
+		if (qstr("de") == code || qstr("es") == code || qstr("it") == code || qstr("ko") == code) {
+			result += qsl("/") + code;
+		} else if (qstr("pt_BR") == code) {
+			result += qsl("/br");
 		}
-	} else {
-		a_opacity.update(ms, anim::linear);
 	}
-	update();
+	return result;
 }
 
-void AboutBox::onClose() {
-	emit closed();
-}
-
-void AboutBox::startHide() {
-	_hiding = true;
-	if (_cache.isNull()) {
-		_cache = myGrab(this, rect());
-		hideAll();
+QString currentVersionText() {
+	auto result = QString::fromLatin1(AppVersionStr.c_str());
+	if (cAlphaVersion()) {
+		result += " alpha";
 	}
-	a_opacity.start(0);
-}
-
-AboutBox::~AboutBox() {
+	if (cBetaVersion()) {
+		result += qsl(" beta %1").arg(cBetaVersion() % 1000);
+	}
+	return result;
 }

@@ -12,42 +12,40 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include "layerwidget.h"
+#include "boxes/abstractbox.h"
 
-class AboutBox : public LayeredWidget {
-	Q_OBJECT
+namespace Ui {
+class LinkButton;
+class FlatLabel;
+} // namespace Ui
 
+class AboutBox : public BoxContent {
 public:
+	AboutBox(QWidget*);
 
-	AboutBox();
-	void parentResized();
-	void animStep(float64 ms);
-	void keyPressEvent(QKeyEvent *e);
-	void paintEvent(QPaintEvent *e);
-	void startHide();
-	~AboutBox();
+protected:
+	void prepare() override;
 
-public slots:
-
-	void onClose();
+	void resizeEvent(QResizeEvent *e) override;
+	void keyPressEvent(QKeyEvent *e) override;
 
 private:
+	void showVersionHistory();
 
-	void hideAll();
-	void showAll();
+	object_ptr<Ui::LinkButton> _version;
+	object_ptr<Ui::FlatLabel> _text1;
+	object_ptr<Ui::FlatLabel> _text2;
+	object_ptr<Ui::FlatLabel> _text3;
 
-	int32 _width, _height;
-	BottomButton _done;
-	FlatLabel _version, _text;
-	int32 _headerWidth, _subheaderWidth;
-
-	bool _hiding;
-	QPixmap _cache;
-
-	anim::fvalue a_opacity;
 };
+
+QString telegramFaqLink();
+QString currentVersionText();

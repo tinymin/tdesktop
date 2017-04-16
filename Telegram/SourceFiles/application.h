@@ -12,38 +12,67 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include <QtNetwork/QLocalSocket>
-#include <QtNetwork/QLocalServer>
-#include <QtNetwork/QNetworkReply>
-
-#include "window.h"
-#include "pspecific.h"
-
-class MainWidget;
-class FileUploader;
-class Translator;
-
-class Application : public PsApplication, public RPCSender {
+class UpdateChecker;
+class Application : public QApplication {
 	Q_OBJECT
 
 public:
-
 	Application(int &argc, char **argv);
-	~Application();
-	
-	static Application *app();
-	static Window *wnd();
-	static QString language();
-	static int32 languageId();
-	static MainWidget *main();
 
-	void onAppUpdate(const MTPhelp_AppUpdate &response);
-	bool onAppUpdateFail();
+	bool event(QEvent *e) override;
+
+	void createMessenger();
+
+	~Application();
+
+signals:
+	void adjustSingleTimers();
+
+// Single instance application
+public slots:
+	void socketConnected();
+	void socketError(QLocalSocket::LocalSocketError e);
+	void socketDisconnected();
+	void socketWritten(qint64 bytes);
+	void socketReading();
+	void newInstanceConnected();
+
+	void readClients();
+	void removeClients();
+
+	void startApplication(); // will be done in exec()
+	void closeApplication(); // will be done in aboutToQuit()
+
+	void onMainThreadTask();
+
+private:
+	typedef QPair<QLocalSocket*, QByteArray> LocalClient;
+	typedef QList<LocalClient> LocalClients;
+
+	std::unique_ptr<Messenger> _messengerInstance;
+
+	QString _localServerName, _localSocketReadData;
+	QLocalServer _localServer;
+	QLocalSocket _localSocket;
+	LocalClients _localClients;
+	bool _secondInstance = false;
+
+	void singleInstanceChecked();
+
+#ifndef TDESKTOP_DISABLE_AUTOUPDATE
+
+// Autoupdating
+public:
+	void startUpdateCheck(bool forceWait);
+	void stopUpdate();
 
 	enum UpdatingState {
 		UpdatingNone,
@@ -54,49 +83,15 @@ public:
 	int32 updatingSize();
 	int32 updatingReady();
 
-	FileUploader *uploader();
-	void uploadProfilePhoto(const QImage &tosend, const PeerId &peerId);
-	void regPhotoUpdate(const PeerId &peer, MsgId msgId);
-	void clearPhotoUpdates();
-	bool isPhotoUpdating(const PeerId &peer);
-	void cancelPhotoUpdate(const PeerId &peer);
-
-	void stopUpdate();
-
-	void selfPhotoCleared(const MTPUserProfilePhoto &result);
-	void chatPhotoCleared(PeerId peer, const MTPmessages_StatedMessage &result);
-	void selfPhotoDone(const MTPphotos_Photo &result);
-	void chatPhotoDone(PeerId peerId, const MTPmessages_StatedMessage &rersult);
-	bool peerPhotoFail(PeerId peerId, const RPCError &e);
-	void peerClearPhoto(PeerId peer);
-
-	void writeUserConfigIn(uint64 ms);
-
-	void killDownloadSessionsStart(int32 dc);
-	void killDownloadSessionsStop(int32 dc);
-
-	void checkLocalTime();
-
 signals:
-
-	void peerPhotoDone(PeerId peer);
-	void peerPhotoFail(PeerId peer);
-
-	void adjustSingleTimers();
+	void updateChecking();
+	void updateLatest();
+	void updateProgress(qint64 ready, qint64 total);
+	void updateReady();
+	void updateFailed();
 
 public slots:
-
-	void startUpdateCheck(bool forceWait = false);
-	void socketConnected();
-	void socketError(QLocalSocket::LocalSocketError e);
-	void socketDisconnected();
-	void socketWritten(qint64 bytes);
-	void socketReading();
-	void newInstanceConnected();
-	void closeApplication();
-
-	void readClients();
-	void removeClients();
+	void updateCheck();
 
 	void updateGotCurrent();
 	void updateFailedCurrent(QNetworkReply::NetworkError e);
@@ -104,46 +99,46 @@ public slots:
 	void onUpdateReady();
 	void onUpdateFailed();
 
-	void photoUpdated(MsgId msgId, const MTPInputFile &file);
-
-	void onEnableDebugMode();
-	void onWriteUserConfig();
-
-	void killDownloadSessions();
-	void onAppStateChanged(Qt::ApplicationState state);
-
 private:
+	object_ptr<SingleTimer> _updateCheckTimer = { nullptr };
+	QNetworkReply *_updateReply = nullptr;
+	QNetworkAccessManager _updateManager;
+	QThread *_updateThread = nullptr;
+	UpdateChecker *_updateChecker = nullptr;
 
-	QMap<MsgId, PeerId> photoUpdates;
-
-	QMap<int32, uint64> killDownloadSessionTimes;
-	SingleTimer killDownloadSessionsTimer;
-
-	void startApp();
-
-	typedef QPair<QLocalSocket*, QByteArray> ClientSocket;
-	typedef QVector<ClientSocket> ClientSockets;
-
-	QString serverName;
-	QLocalSocket socket;
-	QString socketRead;
-	QLocalServer server;
-	ClientSockets clients;
-	bool closing;
-
-	void execExternal(const QString &cmd);
-
-	Window *window;
-
-	mtpRequestId updateRequestId;
-	QNetworkAccessManager updateManager;
-	QNetworkReply *updateReply;
-	SingleTimer updateCheckTimer;
-	QThread *updateThread;
-	PsUpdateDownloader *updateDownloader;
-
-	QTimer writeUserConfigTimer;
-
-	Translator *_translator;
-
+#endif // !TDESKTOP_DISABLE_AUTOUPDATE
 };
+
+namespace Sandbox {
+
+QRect availableGeometry();
+QRect screenGeometry(const QPoint &p);
+void setActiveWindow(QWidget *window);
+bool isSavingSession();
+
+void execExternal(const QString &cmd);
+
+void adjustSingleTimers();
+
+#ifndef TDESKTOP_DISABLE_AUTOUPDATE
+
+void startUpdateCheck();
+void stopUpdate();
+
+Application::UpdatingState updatingState();
+int32 updatingSize();
+int32 updatingReady();
+
+void updateChecking();
+void updateLatest();
+void updateProgress(qint64 ready, qint64 total);
+void updateFailed();
+void updateReady();
+
+#endif // !TDESKTOP_DISABLE_AUTOUPDATE
+
+void connect(const char *signal, QObject *object, const char *method);
+
+void launch();
+
+} // namespace Sandbox

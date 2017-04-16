@@ -12,45 +12,37 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
-#include "layerwidget.h"
+#include "boxes/abstractbox.h"
 
-class LanguageBox : public LayeredWidget {
+namespace Ui {
+class RadiobuttonGroup;
+class Radiobutton;
+} // namespace Ui
+
+class LanguageBox : public BoxContent {
 	Q_OBJECT
 
 public:
+	LanguageBox(QWidget*) {
+	}
 
-	LanguageBox();
-	void parentResized();
-	void animStep(float64 ms);
-	void keyPressEvent(QKeyEvent *e);
-	void mousePressEvent(QMouseEvent *e);
-	void paintEvent(QPaintEvent *e);
-	void startHide();
-	~LanguageBox();
+protected:
+	void prepare() override;
 
-public slots:
-
-	void onChange();
-	void onRestore();
-	void onSave();
-	void onClose();
+	void mousePressEvent(QMouseEvent *e) override;
 
 private:
+	void languageChanged(int languageId);
 
-	void hideAll();
-	void showAll();
+	std::shared_ptr<Ui::RadiobuttonGroup> _langGroup;
+	std::vector<object_ptr<Ui::Radiobutton>> _langs;
 
-	QVector<FlatRadiobutton*> _langs;
-	int32 _width, _height;
-	BottomButton _done;
-
-	bool _hiding;
-	QPixmap _cache;
-
-	anim::fvalue a_opacity;
 };

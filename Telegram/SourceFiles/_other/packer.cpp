@@ -12,27 +12,24 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU General Public License for more details.
 
+In addition, as a special exception, the copyright holders give permission
+to link the code of portions of this program with the OpenSSL library.
+
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #include "packer.h"
 
-#include <QtPlugin>
+#include <QtCore/QtPlugin>
 
 #ifdef Q_OS_MAC
-Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin)
-Q_IMPORT_PLUGIN(QDDSPlugin)
-Q_IMPORT_PLUGIN(QICNSPlugin)
-Q_IMPORT_PLUGIN(QICOPlugin)
-Q_IMPORT_PLUGIN(QJp2Plugin)
-Q_IMPORT_PLUGIN(QMngPlugin)
-Q_IMPORT_PLUGIN(QTgaPlugin)
-Q_IMPORT_PLUGIN(QTiffPlugin)
-Q_IMPORT_PLUGIN(QWbmpPlugin)
-Q_IMPORT_PLUGIN(QWebpPlugin)
+//Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin)
 #endif
 
-const char *publicKey = "\
+bool AlphaChannel = false;
+quint64 BetaVersion = 0;
+
+const char *PublicKey = "\
 -----BEGIN RSA PUBLIC KEY-----\n\
 MIGJAoGBAMA4ViQrjkPZ9xj0lrer3r23JvxOnrtE8nI69XLGSr+sRERz9YnUptnU\n\
 BZpkIfKaRcl6XzNJiN28cVwO1Ui5JSa814UAiDHzWUqCaXUiUEQ6NmNTneiGx2sQ\n\
@@ -40,108 +37,115 @@ BZpkIfKaRcl6XzNJiN28cVwO1Ui5JSa814UAiDHzWUqCaXUiUEQ6NmNTneiGx2sQ\n\
 -----END RSA PUBLIC KEY-----\
 ";
 
-extern const char *privateKey;
-#include "../../../../TelegramPrivate/packer_private.h" // RSA PRIVATE KEY for update signing
+const char *PublicAlphaKey = "\
+-----BEGIN RSA PUBLIC KEY-----\n\
+MIGJAoGBALWu9GGs0HED7KG7BM73CFZ6o0xufKBRQsdnq3lwA8nFQEvmdu+g/I1j\n\
+0LQ+0IQO7GW4jAgzF/4+soPDb6uHQeNFrlVx1JS9DZGhhjZ5rf65yg11nTCIHZCG\n\
+w/CVnbwQOw0g5GBwwFV3r0uTTvy44xx8XXxk+Qknu4eBCsmrAFNnAgMBAAE=\n\
+-----END RSA PUBLIC KEY-----\
+";
+
+extern const char *PrivateKey;
+extern const char *PrivateAlphaKey;
+#include "../../../../TelegramPrivate/packer_private.h" // RSA PRIVATE KEYS for update signing
+#include "../../../../TelegramPrivate/beta_private.h" // private key for beta version file generation
+
+QString countBetaVersionSignature(quint64 version);
 
 // sha1 hash
 typedef unsigned char uchar;
 typedef unsigned int uint32;
 typedef signed int int32;
+
 namespace{
-    inline uint32 sha1Shift(uint32 v, uint32 shift) {
-        return ((v << shift) | (v >> (32 - shift)));
-    }
-    void sha1PartHash(uint32 *sha, uint32 *temp)
-    {
-        uint32 a = sha[0], b = sha[1], c = sha[2], d = sha[3], e = sha[4], round = 0;
 
-        #define _shiftswap(f, v) { \
-            uint32 t = sha1Shift(a, 5) + (f) + e + v + temp[round]; \
-			e = d; \
-			d = c; \
-			c = sha1Shift(b, 30); \
-			b = a; \
-			a = t; \
-            ++round; \
-		}
-		#define _shiftshiftswap(f, v) { \
-            temp[round] = sha1Shift((temp[round - 3] ^ temp[round - 8] ^ temp[round - 14] ^ temp[round - 16]), 1); \
-			_shiftswap(f, v) \
-		}
-
-        while (round < 16) _shiftswap((b & c) | (~b & d), 0x5a827999)
-        while (round < 20) _shiftshiftswap((b & c) | (~b & d), 0x5a827999)
-        while (round < 40) _shiftshiftswap(b ^ c ^ d, 0x6ed9eba1)
-        while (round < 60) _shiftshiftswap((b & c) | (b & d) | (c & d), 0x8f1bbcdc)
-        while (round < 80) _shiftshiftswap(b ^ c ^ d, 0xca62c1d6)
-
-        #undef _shiftshiftswap
-        #undef _shiftswap
-
-        sha[0] += a;
-        sha[1] += b;
-        sha[2] += c;
-        sha[3] += d;
-        sha[4] += e;
-    }
+inline uint32 sha1Shift(uint32 v, uint32 shift) {
+	return ((v << shift) | (v >> (32 - shift)));
 }
+
+void sha1PartHash(uint32 *sha, uint32 *temp) {
+	uint32 a = sha[0], b = sha[1], c = sha[2], d = sha[3], e = sha[4], round = 0;
+
+#define _shiftswap(f, v) { \
+		uint32 t = sha1Shift(a, 5) + (f) + e + v + temp[round]; \
+		e = d; \
+		d = c; \
+		c = sha1Shift(b, 30); \
+		b = a; \
+		a = t; \
+		++round; \
+	}
+
+#define _shiftshiftswap(f, v) { \
+		temp[round] = sha1Shift((temp[round - 3] ^ temp[round - 8] ^ temp[round - 14] ^ temp[round - 16]), 1); \
+		_shiftswap(f, v) \
+	}
+
+	while (round < 16) _shiftswap((b & c) | (~b & d), 0x5a827999)
+	while (round < 20) _shiftshiftswap((b & c) | (~b & d), 0x5a827999)
+	while (round < 40) _shiftshiftswap(b ^ c ^ d, 0x6ed9eba1)
+	while (round < 60) _shiftshiftswap((b & c) | (b & d) | (c & d), 0x8f1bbcdc)
+	while (round < 80) _shiftshiftswap(b ^ c ^ d, 0xca62c1d6)
+
+#undef _shiftshiftswap
+#undef _shiftswap
+
+	sha[0] += a;
+	sha[1] += b;
+	sha[2] += c;
+	sha[3] += d;
+	sha[4] += e;
+}
+
+} // namespace
 
 int32 *hashSha1(const void *data, uint32 len, void *dest) {
 	const uchar *buf = (const uchar *)data;
 
-    uint32 temp[80], block = 0, end;
-    uint32 sha[5] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0};
-    for (end = block + 64; block + 64 <= len; end = block + 64) {
-        for (uint32 i = 0; block < end; block += 4) {
-            temp[i++] = (uint32) buf[block + 3]
-                    | (((uint32) buf[block + 2]) << 8)
-                    | (((uint32) buf[block + 1]) << 16)
-                    | (((uint32) buf[block]) << 24);
-        }
-        sha1PartHash(sha, temp);
-    }
+	uint32 temp[80], block = 0, end;
+	uint32 sha[5] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0};
+	for (end = block + 64; block + 64 <= len; end = block + 64) {
+		for (uint32 i = 0; block < end; block += 4) {
+			temp[i++] = (uint32) buf[block + 3]
+			        | (((uint32) buf[block + 2]) << 8)
+			        | (((uint32) buf[block + 1]) << 16)
+			        | (((uint32) buf[block]) << 24);
+		}
+		sha1PartHash(sha, temp);
+	}
 
-    end = len - block;
+	end = len - block;
 	memset(temp, 0, sizeof(uint32) * 16);
-    uint32 last = 0;
-    for (; last < end; ++last) {
-        temp[last >> 2] |= (uint32)buf[last + block] << ((3 - (last & 0x03)) << 3);
-    }
-    temp[last >> 2] |= 0x80 << ((3 - (last & 3)) << 3);
-    if (end >= 56) {
-        sha1PartHash(sha, temp);
+	uint32 last = 0;
+	for (; last < end; ++last) {
+		temp[last >> 2] |= (uint32)buf[last + block] << ((3 - (last & 0x03)) << 3);
+	}
+	temp[last >> 2] |= 0x80 << ((3 - (last & 3)) << 3);
+	if (end >= 56) {
+		sha1PartHash(sha, temp);
 		memset(temp, 0, sizeof(uint32) * 16);
-    }
-    temp[15] = len << 3;
-    sha1PartHash(sha, temp);
+	}
+	temp[15] = len << 3;
+	sha1PartHash(sha, temp);
 
 	uchar *sha1To = (uchar*)dest;
 
-    for (int32 i = 19; i >= 0; --i) {
-        sha1To[i] = (sha[i >> 2] >> (((3 - i) & 0x03) << 3)) & 0xFF;
-    }
+	for (int32 i = 19; i >= 0; --i) {
+		sha1To[i] = (sha[i >> 2] >> (((3 - i) & 0x03) << 3)) & 0xFF;
+	}
 
 	return (int32*)sha1To;
 }
 
+QString BetaSignature;
+
 int main(int argc, char *argv[])
 {
 	QString workDir;
-#ifdef Q_OS_MAC
-    if (QDir(QString()).absolutePath() == "/") {
-		QString first = argc ? QString::fromLocal8Bit(argv[0]) : QString();
-		if (!first.isEmpty()) {
-			QFileInfo info(first);
-			if (info.exists()) {
-				QDir result(info.absolutePath() + "/../../..");
-				workDir = result.absolutePath() + '/';
-			}
-		}
-	}
-#endif
 
 	QString remove;
 	int version = 0;
+	bool target32 = false;
 	QFileInfoList files;
 	for (int i = 0; i < argc; ++i) {
 		if (string("-path") == argv[i] && i + 1 < argc) {
@@ -149,16 +153,34 @@ int main(int argc, char *argv[])
 			QFileInfo info(path);
 			files.push_back(info);
 			if (remove.isEmpty()) remove = info.canonicalPath() + "/";
+		} else if (string("-target") == argv[i] && i + 1 < argc) {
+			target32 = (string("mac32") == argv[i + 1]);
 		} else if (string("-version") == argv[i] && i + 1 < argc) {
 			version = QString(argv[i + 1]).toInt();
+		} else if (string("-alpha") == argv[i]) {
+			AlphaChannel = true;
+		} else if (string("-beta") == argv[i] && i + 1 < argc) {
+			BetaVersion = QString(argv[i + 1]).toULongLong();
+			if (BetaVersion > version * 1000ULL && BetaVersion < (version + 1) * 1000ULL) {
+				AlphaChannel = false;
+				BetaSignature = countBetaVersionSignature(BetaVersion);
+				if (BetaSignature.isEmpty()) {
+					return -1;
+				}
+			} else {
+				cout << "Bad -beta param value passed, should be for the same version: " << version << ", beta: " << BetaVersion << "\n";
+				return -1;
+			}
 		}
 	}
 
-	if (files.isEmpty() || remove.isEmpty() || version <= 1016 || version > 999999) { // not for release =)
+	if (files.isEmpty() || remove.isEmpty() || version <= 1016 || version > 999999999) {
 #ifdef Q_OS_WIN
 		cout << "Usage: Packer.exe -path {file} -version {version} OR Packer.exe -path {dir} -version {version}\n";
 #elif defined Q_OS_MAC
 		cout << "Usage: Packer.app -path {file} -version {version} OR Packer.app -path {dir} -version {version}\n";
+#else
+		cout << "Usage: Packer -path {file} -version {version} OR Packer -path {dir} -version {version}\n";
 #endif
 		return -1;
 	}
@@ -202,7 +224,12 @@ int main(int argc, char *argv[])
 		QDataStream stream(&buffer);
 		stream.setVersion(QDataStream::Qt_5_1);
 
-		stream << quint32(version);
+		if (BetaVersion) {
+			stream << quint32(0x7FFFFFFF);
+			stream << quint64(BetaVersion);
+		} else {
+			stream << quint32(version);
+		}
 
 		stream << quint32(files.size());
 		cout << "Found " << files.size() << " file" << (files.size() == 1 ? "" : "s") << "..\n";
@@ -240,7 +267,12 @@ int main(int argc, char *argv[])
 
 	size_t compressedLen = compressed.size() - hSize;
 	size_t outPropsSize = LZMA_PROPS_SIZE;
-	int res = LzmaCompress((uchar*)(compressed.data() + hSize), &compressedLen, (const uchar*)(result.constData()), result.size(), (uchar*)(compressed.data() + hSigLen + hShaLen), &outPropsSize, 9, 64 * 1024 * 1024, 0, 0, 0, 0, 0);
+	uchar *_dest = (uchar*)(compressed.data() + hSize);
+	size_t *_destLen = &compressedLen;
+	const uchar *_src = (const uchar*)(result.constData());
+	size_t _srcLen = result.size();
+	uchar *_outProps = (uchar*)(compressed.data() + hSigLen + hShaLen);
+	int res = LzmaCompress(_dest, _destLen, _src, _srcLen, _outProps, &outPropsSize, 9, 64 * 1024 * 1024, 4, 0, 2, 273, 2);
 	if (res != SZ_OK) {
 		cout << "Error in compression: " << res << "\n";
 		return -1;
@@ -388,19 +420,19 @@ int main(int argc, char *argv[])
 	uint32 siglen = 0;
 
 	cout << "Signing..\n";
-	RSA *prKey = PEM_read_bio_RSAPrivateKey(BIO_new_mem_buf(const_cast<char*>(privateKey), -1), 0, 0, 0);
+	RSA *prKey = PEM_read_bio_RSAPrivateKey(BIO_new_mem_buf(const_cast<char*>((AlphaChannel || BetaVersion) ? PrivateAlphaKey : PrivateKey), -1), 0, 0, 0);
 	if (!prKey) {
 		cout << "Could not read RSA private key!\n";
 		return -1;
 	}
 	if (RSA_size(prKey) != hSigLen) {
-		RSA_free(prKey);
 		cout << "Bad private key, size: " << RSA_size(prKey) << "\n";
+		RSA_free(prKey);
 		return -1;
 	}
 	if (RSA_sign(NID_sha1, (const uchar*)(compressed.constData() + hSigLen), hShaLen, (uchar*)(compressed.data()), &siglen, prKey) != 1) { // count signature
-		RSA_free(prKey);
 		cout << "Signing failed!\n";
+		RSA_free(prKey);
 		return -1;
 	}
 	RSA_free(prKey);
@@ -411,7 +443,7 @@ int main(int argc, char *argv[])
 	}
 
 	cout << "Checking signature..\n";
-	RSA *pbKey = PEM_read_bio_RSAPublicKey(BIO_new_mem_buf(const_cast<char*>(publicKey), -1), 0, 0, 0);
+	RSA *pbKey = PEM_read_bio_RSAPublicKey(BIO_new_mem_buf(const_cast<char*>((AlphaChannel || BetaVersion) ? PublicAlphaKey : PublicKey), -1), 0, 0, 0);
 	if (!pbKey) {
 		cout << "Could not read RSA public key!\n";
 		return -1;
@@ -424,16 +456,19 @@ int main(int argc, char *argv[])
 	cout << "Signature verified!\n";
 	RSA_free(pbKey);
 #ifdef Q_OS_WIN
-	QString outName(QString("tupdate%1").arg(version));
+	QString outName(QString("tupdate%1").arg(BetaVersion ? BetaVersion : version));
 #elif defined Q_OS_MAC
-	QString outName(QString("tmacupd%1").arg(version));
+	QString outName((target32 ? QString("tmac32upd%1") : QString("tmacupd%1")).arg(BetaVersion ? BetaVersion : version));
 #elif defined Q_OS_LINUX32
-    QString outName(QString("tlinux32upd%1").arg(version));
+	QString outName(QString("tlinux32upd%1").arg(BetaVersion ? BetaVersion : version));
 #elif defined Q_OS_LINUX64
-    QString outName(QString("tlinuxupd%1").arg(version));
+	QString outName(QString("tlinuxupd%1").arg(BetaVersion ? BetaVersion : version));
 #else
 #error Unknown platform!
 #endif
+	if (BetaVersion) {
+		outName += "_" + BetaSignature;
+	}
 	QFile out(outName);
 	if (!out.open(QIODevice::WriteOnly)) {
 		cout << "Can't open '" << outName.toUtf8().constData() << "' for write..\n";
@@ -442,7 +477,63 @@ int main(int argc, char *argv[])
 	out.write(compressed);
 	out.close();
 
+	if (BetaVersion) {
+		QString keyName(QString("tbeta_%1_key").arg(BetaVersion));
+		QFile key(keyName);
+		if (!key.open(QIODevice::WriteOnly)) {
+			cout << "Can't open '" << keyName.toUtf8().constData() << "' for write..\n";
+			return -1;
+		}
+		key.write(BetaSignature.toUtf8());
+		key.close();
+	}
+
 	cout << "Update file '" << outName.toUtf8().constData() << "' written successfully!\n";
 
 	return 0;
+}
+
+QString countBetaVersionSignature(quint64 version) { // duplicated in autoupdate.cpp
+	QByteArray cBetaPrivateKey(BetaPrivateKey);
+	if (cBetaPrivateKey.isEmpty()) {
+		cout << "Error: Trying to count beta version signature without beta private key!\n";
+		return QString();
+	}
+
+	QByteArray signedData = (QLatin1String("TelegramBeta_") + QString::number(version, 16).toLower()).toUtf8();
+
+	static const int32 shaSize = 20, keySize = 128;
+
+	uchar sha1Buffer[shaSize];
+	hashSha1(signedData.constData(), signedData.size(), sha1Buffer); // count sha1
+
+	uint32 siglen = 0;
+
+	RSA *prKey = PEM_read_bio_RSAPrivateKey(BIO_new_mem_buf(const_cast<char*>(cBetaPrivateKey.constData()), -1), 0, 0, 0);
+	if (!prKey) {
+		cout << "Error: Could not read beta private key!\n";
+		return QString();
+	}
+	if (RSA_size(prKey) != keySize) {
+		cout << "Error: Bad beta private key size: " << RSA_size(prKey) << "\n";
+		RSA_free(prKey);
+		return QString();
+	}
+	QByteArray signature;
+	signature.resize(keySize);
+	if (RSA_sign(NID_sha1, (const uchar*)(sha1Buffer), shaSize, (uchar*)(signature.data()), &siglen, prKey) != 1) { // count signature
+		cout << "Error: Counting beta version signature failed!\n";
+		RSA_free(prKey);
+		return QString();
+	}
+	RSA_free(prKey);
+
+	if (siglen != keySize) {
+		cout << "Error: Bad beta version signature length: " << siglen << "\n";
+		return QString();
+	}
+
+	signature = signature.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
+	signature = signature.replace('-', '8').replace('_', 'B');
+	return QString::fromUtf8(signature.mid(19, 32));
 }
