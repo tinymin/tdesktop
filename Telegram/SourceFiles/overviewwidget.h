@@ -21,6 +21,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #pragma once
 
 #include "window/section_widget.h"
+#include "window/top_bar_widget.h"
 #include "ui/widgets/tooltip.h"
 #include "ui/widgets/scroll_area.h"
 
@@ -90,7 +91,7 @@ public:
 	void changingMsgId(HistoryItem *row, MsgId newId);
 	void repaintItem(const HistoryItem *msg);
 
-	void getSelectionState(int32 &selectedForForward, int32 &selectedForDelete) const;
+	Window::TopBarWidget::SelectedState getSelectionState() const;
 	void clearSelectedItems(bool onlyTextSelection = false);
 	void fillSelectedItems(SelectedItemSet &sel, bool forDelete = true);
 
@@ -139,6 +140,8 @@ public slots:
 private:
 	void saveDocumentToFile(DocumentData *document);
 	void invalidateCache();
+	void resizeItems();
+	void resizeAndRepositionItems();
 
 	void itemRemoved(HistoryItem *item);
 	MsgId complexMsgId(const HistoryItem *item) const;
@@ -165,7 +168,7 @@ private:
 	void addSelectionRange(int32 selFrom, int32 selTo, History *history);
 
 	void recountMargins();
-	int32 countHeight();
+	int countHeight();
 
 	OverviewWidget *_overview;
 	Ui::ScrollArea *_scroll;
@@ -283,7 +286,7 @@ private:
 	Ui::PopupMenu *_menu = nullptr;
 };
 
-class OverviewWidget : public TWidget, public RPCSender {
+class OverviewWidget : public Window::AbstractSectionWidget, public RPCSender {
 	Q_OBJECT
 
 public:
@@ -348,6 +351,10 @@ public:
 	void deleteContextItem(bool forEveryone);
 	void deleteSelectedItems(bool forEveryone);
 
+	// Float player interface.
+	bool wheelEventFromFloatPlayer(QEvent *e, Window::Column myColumn, Window::Column playerColumn) override;
+	QRect rectForFloatPlayer(Window::Column myColumn, Window::Column playerColumn) override;
+
 	void ui_repaintHistoryItem(const HistoryItem *item);
 
 	void notify_historyItemLayoutChanged(const HistoryItem *item);
@@ -372,8 +379,6 @@ private:
 	void topBarClick();
 	void animationCallback();
 
-	gsl::not_null<Window::Controller*> _controller;
-
 	object_ptr<Ui::AbstractButton> _backAnimationButton = { nullptr };
 	object_ptr<Window::TopBarWidget> _topBar;
 	object_ptr<Ui::ScrollArea> _scroll;
@@ -393,8 +398,6 @@ private:
 
 	QTimer _scrollTimer;
 	int32 _scrollDelta = 0;
-
-	int32 _selCount = 0;
 
 	object_ptr<Ui::PlainShadow> _topShadow;
 	bool _inGrab = false;

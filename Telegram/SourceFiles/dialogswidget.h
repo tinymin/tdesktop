@@ -58,7 +58,7 @@ class DialogsInner : public Ui::SplittedWidget, public RPCSender, private base::
 	Q_OBJECT
 
 public:
-	DialogsInner(QWidget *parent, QWidget *main);
+	DialogsInner(QWidget *parent, gsl::not_null<Window::Controller*> controller, QWidget *main);
 
 	void dialogsReceived(const QVector<MTPDialog> &dialogs);
 	void addSavedPeersAfter(const QDateTime &date);
@@ -226,6 +226,8 @@ private:
 	void savePinnedOrder();
 	void step_pinnedShifting(TimeMs ms, bool timer);
 
+	gsl::not_null<Window::Controller*> _controller;
+
 	DialogsList _dialogs;
 	DialogsList _dialogsImportant;
 
@@ -303,7 +305,7 @@ private:
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(DialogsInner::UpdateRowSections);
 
-class DialogsWidget : public TWidget, public RPCSender, private base::Subscriber {
+class DialogsWidget : public Window::AbstractSectionWidget, public RPCSender {
 	Q_OBJECT
 
 public:
@@ -345,10 +347,9 @@ public:
 	void searchMessages(const QString &query, PeerData *inPeer = 0);
 	void onSearchMore();
 
-	void rpcClear() override {
-		_inner->rpcClear();
-		RPCSender::rpcClear();
-	}
+	// Float player interface.
+	bool wheelEventFromFloatPlayer(QEvent *e, Window::Column myColumn, Window::Column playerColumn) override;
+	QRect rectForFloatPlayer(Window::Column myColumn, Window::Column playerColumn) override;
 
 	void notify_userIsContactChanged(UserData *user, bool fromThisApp);
 	void notify_historyMuteUpdated(History *history);
@@ -411,8 +412,6 @@ private:
 	bool contactsFailed(const RPCError &error);
 	bool searchFailed(DialogsSearchRequestType type, const RPCError &error, mtpRequestId req);
 	bool peopleFailed(const RPCError &error, mtpRequestId req);
-
-	gsl::not_null<Window::Controller*> _controller;
 
 	bool _dragInScroll = false;
 	bool _dragForward = false;

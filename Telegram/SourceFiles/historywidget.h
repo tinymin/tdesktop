@@ -22,12 +22,11 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 
 #include "storage/localimageloader.h"
 #include "ui/widgets/tooltip.h"
-#include "ui/widgets/input_fields.h"
-#include "ui/widgets/scroll_area.h"
 #include "history/history_common.h"
-#include "history/field_autocomplete.h"
+#include "chat_helpers/field_autocomplete.h"
 #include "window/section_widget.h"
 #include "core/single_timer.h"
+#include "ui/widgets/input_fields.h"
 
 namespace InlineBots {
 namespace Layout {
@@ -58,312 +57,23 @@ class TopBarWidget;
 } // namespace Window
 
 namespace ChatHelpers {
-class EmojiPanel;
+class TabbedPanel;
+class TabbedSection;
+class TabbedSelector;
 } // namespace ChatHelpers
 
 class DragArea;
 class SilentToggle;
 class SendFilesBox;
+class BotKeyboard;
+class MessageField;
+class HistoryInner;
 
-class HistoryWidget;
-class HistoryInner : public TWidget, public Ui::AbstractTooltipShower, private base::Subscriber {
-	Q_OBJECT
-
-public:
-	HistoryInner(HistoryWidget *historyWidget, Ui::ScrollArea *scroll, History *history);
-
-	void messagesReceived(PeerData *peer, const QVector<MTPMessage> &messages);
-	void messagesReceivedDown(PeerData *peer, const QVector<MTPMessage> &messages);
-
-	void showContextMenu(QContextMenuEvent *e, bool showFromTouch = false);
-
-	TextWithEntities getSelectedText() const;
-
-	void dragActionStart(const QPoint &screenPos, Qt::MouseButton button = Qt::LeftButton);
-	void dragActionUpdate(const QPoint &screenPos);
-	void dragActionFinish(const QPoint &screenPos, Qt::MouseButton button = Qt::LeftButton);
-	void dragActionCancel();
-
-	void touchScrollUpdated(const QPoint &screenPos);
-	QPoint mapMouseToItem(QPoint p, HistoryItem *item);
-
-	void recountHeight();
-	void updateSize();
-
-	void repaintItem(const HistoryItem *item);
-
-	bool canCopySelected() const;
-	bool canDeleteSelected() const;
-
-	void getSelectionState(int32 &selectedForForward, int32 &selectedForDelete) const;
-	void clearSelectedItems(bool onlyTextSelection = false);
-	void fillSelectedItems(SelectedItemSet &sel, bool forDelete = true);
-	void selectItem(HistoryItem *item);
-
-	void updateBotInfo(bool recount = true);
-
-	bool wasSelectedText() const;
-	void setFirstLoading(bool loading);
-
-	// updates history->scrollTopItem/scrollTopOffset
-	void visibleAreaUpdated(int top, int bottom);
-
-	int historyHeight() const;
-	int historyScrollTop() const;
-	int migratedTop() const;
-	int historyTop() const;
-	int historyDrawTop() const;
-	int itemTop(const HistoryItem *item) const; // -1 if should not be visible, -2 if bad history()
-
-	void notifyIsBotChanged();
-	void notifyMigrateUpdated();
-
-	// When inline keyboard has moved because of the edition of its item we want
-	// to move scroll position so that mouse points to the same button row.
-	int moveScrollFollowingInlineKeyboard(const HistoryItem *item, int oldKeyboardTop, int newKeyboardTop);
-
-	// AbstractTooltipShower interface
-	QString tooltipText() const override;
-	QPoint tooltipPos() const override;
-
-	~HistoryInner();
-
-protected:
-	bool focusNextPrevChild(bool next) override;
-
-	bool event(QEvent *e) override; // calls touchEvent when necessary
-	void touchEvent(QTouchEvent *e);
-	void paintEvent(QPaintEvent *e) override;
-	void mouseMoveEvent(QMouseEvent *e) override;
-	void mousePressEvent(QMouseEvent *e) override;
-	void mouseReleaseEvent(QMouseEvent *e) override;
-	void mouseDoubleClickEvent(QMouseEvent *e) override;
-	void enterEventHook(QEvent *e) override;
-	void leaveEventHook(QEvent *e) override;
-	void resizeEvent(QResizeEvent *e) override;
-	void keyPressEvent(QKeyEvent *e) override;
-
-public slots:
-	void onUpdateSelected();
-	void onParentGeometryChanged();
-
-	void copyContextUrl();
-	void copyContextImage();
-	void cancelContextDownload();
-	void showContextInFolder();
-	void saveContextGif();
-	void copyContextText();
-	void copySelectedText();
-
-	void onMenuDestroy(QObject *obj);
-	void onTouchSelect();
-	void onTouchScrollTimer();
-	void onDragExec();
-
-private slots:
-	void onScrollDateCheck();
-	void onScrollDateHideByTimer();
-
-private:
-	void itemRemoved(HistoryItem *item);
-	void savePhotoToFile(PhotoData *photo);
-	void saveDocumentToFile(DocumentData *document);
-
-	void touchResetSpeed();
-	void touchUpdateSpeed();
-	void touchDeaccelerate(int32 elapsed);
-
-	void adjustCurrent(int32 y) const;
-	void adjustCurrent(int32 y, History *history) const;
-	HistoryItem *prevItem(HistoryItem *item);
-	HistoryItem *nextItem(HistoryItem *item);
-	void updateDragSelection(HistoryItem *dragSelFrom, HistoryItem *dragSelTo, bool dragSelecting, bool force = false);
-
-	void setToClipboard(const TextWithEntities &forClipboard, QClipboard::Mode mode = QClipboard::Clipboard);
-
-	void toggleScrollDateShown();
-	void repaintScrollDateCallback();
-	bool displayScrollDate() const;
-	void scrollDateHide();
-	void keepScrollDateForNow();
-
-	PeerData *_peer = nullptr;
-	History *_migrated = nullptr;
-	History *_history = nullptr;
-	int _historyPaddingTop = 0;
-
-	// with migrated history we perhaps do not need to display first _history message
-	// (if last _migrated message and first _history message are both isGroupMigrate)
-	// or at least we don't need to display first _history date (just skip it by height)
-	int _historySkipHeight = 0;
-
-	class BotAbout : public ClickHandlerHost {
-	public:
-		BotAbout(HistoryInner *parent, BotInfo *info) : info(info), _parent(parent) {
-		}
-		BotInfo *info = nullptr;
-		int width = 0;
-		int height = 0;
-		QRect rect;
-
-		// ClickHandlerHost interface
-		void clickHandlerActiveChanged(const ClickHandlerPtr &p, bool active) override;
-		void clickHandlerPressedChanged(const ClickHandlerPtr &p, bool pressed) override;
-
-	private:
-		HistoryInner *_parent;
-
-	};
-	std::unique_ptr<BotAbout> _botAbout;
-
-	HistoryWidget *_widget = nullptr;
-	Ui::ScrollArea *_scroll = nullptr;
-	mutable History *_curHistory = nullptr;
-	mutable int _curBlock = 0;
-	mutable int _curItem = 0;
-
-	bool _firstLoading = false;
-
-	style::cursor _cursor = style::cur_default;
-	using SelectedItems = QMap<HistoryItem*, TextSelection>;
-	SelectedItems _selected;
-	void applyDragSelection();
-	void applyDragSelection(SelectedItems *toItems) const;
-	void addSelectionRange(SelectedItems *toItems, int32 fromblock, int32 fromitem, int32 toblock, int32 toitem, History *h) const;
-
-	// Does any of the shown histories has this flag set.
-	bool hasPendingResizedItems() const {
-		return (_history && _history->hasPendingResizedItems()) || (_migrated && _migrated->hasPendingResizedItems());
-	}
-
-	enum DragAction {
-		NoDrag        = 0x00,
-		PrepareDrag   = 0x01,
-		Dragging      = 0x02,
-		PrepareSelect = 0x03,
-		Selecting     = 0x04,
-	};
-	DragAction _dragAction = NoDrag;
-	TextSelectType _dragSelType = TextSelectType::Letters;
-	QPoint _dragStartPos, _dragPos;
-	HistoryItem *_dragItem = nullptr;
-	HistoryCursorState _dragCursorState = HistoryDefaultCursorState;
-	uint16 _dragSymbol = 0;
-	bool _dragWasInactive = false;
-
-	QPoint _trippleClickPoint;
-	QTimer _trippleClickTimer;
-
-	ClickHandlerPtr _contextMenuLnk;
-
-	HistoryItem *_dragSelFrom = nullptr;
-	HistoryItem *_dragSelTo = nullptr;
-	bool _dragSelecting = false;
-	bool _wasSelectedText = false; // was some text selected in current drag action
-
-	// scroll by touch support (at least Windows Surface tablets)
-	bool _touchScroll = false;
-	bool _touchSelect = false;
-	bool _touchInProgress = false;
-	QPoint _touchStart, _touchPrevPos, _touchPos;
-	QTimer _touchSelectTimer;
-
-	Ui::TouchScrollState _touchScrollState = Ui::TouchScrollState::Manual;
-	bool _touchPrevPosValid = false;
-	bool _touchWaitingAcceleration = false;
-	QPoint _touchSpeed;
-	TimeMs _touchSpeedTime = 0;
-	TimeMs _touchAccelerationTime = 0;
-	TimeMs _touchTime = 0;
-	QTimer _touchScrollTimer;
-
-	// context menu
-	Ui::PopupMenu *_menu = nullptr;
-
-	// save visible area coords for painting / pressing userpics
-	int _visibleAreaTop = 0;
-	int _visibleAreaBottom = 0;
-
-	bool _scrollDateShown = false;
-	Animation _scrollDateOpacity;
-	SingleDelayedCall _scrollDateCheck = { this, "onScrollDateCheck" };
-	SingleTimer _scrollDateHideTimer;
-	HistoryItem *_scrollDateLastItem = nullptr;
-	int _scrollDateLastItemTop = 0;
-	ClickHandlerPtr _scrollDateLink;
-
-	enum class EnumItemsDirection {
-		TopToBottom,
-		BottomToTop,
-	};
-	// this function finds all history items that are displayed and calls template method
-	// for each found message (in given direction) in the passed history with passed top offset
-	//
-	// method has "bool (*Method)(HistoryItem *item, int itemtop, int itembottom)" signature
-	// if it returns false the enumeration stops immidiately
-	template <bool TopToBottom, typename Method>
-	void enumerateItemsInHistory(History *history, int historytop, Method method);
-
-	template <EnumItemsDirection direction, typename Method>
-	void enumerateItems(Method method) {
-		constexpr auto TopToBottom = (direction == EnumItemsDirection::TopToBottom);
-		if (TopToBottom && _migrated) {
-			enumerateItemsInHistory<TopToBottom>(_migrated, migratedTop(), method);
-		}
-		enumerateItemsInHistory<TopToBottom>(_history, historyTop(), method);
-		if (!TopToBottom && _migrated) {
-			enumerateItemsInHistory<TopToBottom>(_migrated, migratedTop(), method);
-		}
-	}
-
-	// this function finds all userpics on the left that are displayed and calls template method
-	// for each found userpic (from the top to the bottom) using enumerateItems() method
-	//
-	// method has "bool (*Method)(HistoryMessage *message, int userpicTop)" signature
-	// if it returns false the enumeration stops immidiately
-	template <typename Method>
-	void enumerateUserpics(Method method);
-
-	// this function finds all date elements that are displayed and calls template method
-	// for each found date element (from the bottom to the top) using enumerateItems() method
-	//
-	// method has "bool (*Method)(HistoryItem *item, int itemtop, int dateTop)" signature
-	// if it returns false the enumeration stops immidiately
-	template <typename Method>
-	void enumerateDates(Method method);
-
-};
-
-class MessageField : public Ui::FlatTextarea {
-	Q_OBJECT
-
-public:
-	MessageField(HistoryWidget *history, const style::FlatTextarea &st, const QString &ph = QString(), const QString &val = QString());
-	void dropEvent(QDropEvent *e);
-	bool canInsertFromMimeData(const QMimeData *source) const;
-	void insertFromMimeData(const QMimeData *source);
-
-	void focusInEvent(QFocusEvent *e);
-
-	bool hasSendText() const;
-
-public slots:
-	void onEmojiInsert(EmojiPtr emoji);
-
-signals:
-	void focused();
-
-private:
-	HistoryWidget *history;
-
-};
-
-class HistoryWidget;
 class ReportSpamPanel : public TWidget {
 	Q_OBJECT
 
 public:
-	ReportSpamPanel(HistoryWidget *parent);
+	ReportSpamPanel(QWidget *parent);
 
 	void setReported(bool reported, PeerData *onPeer);
 
@@ -380,92 +90,6 @@ private:
 	object_ptr<Ui::FlatButton> _report;
 	object_ptr<Ui::FlatButton> _hide;
 	object_ptr<Ui::LinkButton> _clear;
-
-};
-
-class BotKeyboard : public TWidget, public Ui::AbstractTooltipShower, public ClickHandlerHost {
-	Q_OBJECT
-
-public:
-	BotKeyboard(QWidget *parent);
-
-	bool moderateKeyActivate(int index);
-
-	// With force=true the markup is updated even if it is
-	// already shown for the passed history item.
-	bool updateMarkup(HistoryItem *last, bool force = false);
-	bool hasMarkup() const;
-	bool forceReply() const;
-
-	void step_selected(TimeMs ms, bool timer);
-	void resizeToWidth(int newWidth, int maxOuterHeight) {
-		_maxOuterHeight = maxOuterHeight;
-		return TWidget::resizeToWidth(newWidth);
-	}
-
-	bool maximizeSize() const;
-	bool singleUse() const;
-
-	FullMsgId forMsgId() const {
-		return _wasForMsgId;
-	}
-
-	// AbstractTooltipShower interface
-	QString tooltipText() const override;
-	QPoint tooltipPos() const override;
-
-	// ClickHandlerHost interface
-	void clickHandlerActiveChanged(const ClickHandlerPtr &p, bool active) override;
-	void clickHandlerPressedChanged(const ClickHandlerPtr &p, bool pressed) override;
-
-protected:
-	int resizeGetHeight(int newWidth) override;
-
-	void paintEvent(QPaintEvent *e) override;
-	void mousePressEvent(QMouseEvent *e) override;
-	void mouseMoveEvent(QMouseEvent *e) override;
-	void mouseReleaseEvent(QMouseEvent *e) override;
-	void enterEventHook(QEvent *e) override;
-	void leaveEventHook(QEvent *e) override;
-
-private:
-	void updateSelected();
-
-	void updateStyle(int newWidth);
-	void clearSelection();
-
-	FullMsgId _wasForMsgId;
-	int _height = 0;
-	int _maxOuterHeight = 0;
-	bool _maximizeSize = false;
-	bool _singleUse = false;
-	bool _forceReply = false;
-
-	QPoint _lastMousePos;
-	std::unique_ptr<ReplyKeyboard> _impl;
-
-	class Style : public ReplyKeyboard::Style {
-	public:
-		Style(BotKeyboard *parent, const style::BotKeyboardButton &st) : ReplyKeyboard::Style(st), _parent(parent) {
-		}
-
-		int buttonRadius() const override;
-
-		void startPaint(Painter &p) const override;
-		const style::TextStyle &textStyle() const override;
-		void repaint(const HistoryItem *item) const override;
-
-	protected:
-		void paintButtonBg(Painter &p, const QRect &rect, float64 howMuchOver) const override;
-		void paintButtonIcon(Painter &p, const QRect &rect, int outerWidth, HistoryMessageReplyMarkup::Button::Type type) const override;
-		void paintButtonLoading(Painter &p, const QRect &rect) const override;
-		int minButtonWidth(HistoryMessageReplyMarkup::Button::Type type) const override;
-
-	private:
-		BotKeyboard *_parent;
-
-	};
-	const style::BotKeyboardButton *_st = nullptr;
 
 };
 
@@ -537,10 +161,7 @@ private:
 
 };
 
-EntitiesInText entitiesFromTextTags(const TextWithTags::Tags &tags);
-TextWithTags::Tags textTagsFromEntities(const EntitiesInText &entities);
-
-class HistoryWidget : public TWidget, public RPCSender, private base::Subscriber {
+class HistoryWidget final : public Window::AbstractSectionWidget, public RPCSender {
 	Q_OBJECT
 
 public:
@@ -559,6 +180,7 @@ public:
 	void dragLeaveEvent(QDragLeaveEvent *e) override;
     void dropEvent(QDropEvent *e) override;
 
+	bool isItemCompletelyHidden(HistoryItem *item) const;
 	void updateTopBarSelection();
 
 	bool paintTopBar(Painter &p, int decreaseWidth, TimeMs ms);
@@ -579,6 +201,9 @@ public:
 	void unreadCountChanged(History *history);
 
 	QRect historyRect() const;
+	int tabbedSelectorSectionWidth() const;
+	int minimalWidthForTabbedSelectorSection() const;
+	bool willSwitchToTabbedSelectorWithWidth(int newWidth) const;
 
 	void updateSendAction(History *history, SendAction::Type type, int32 progress = 0);
 	void cancelSendAction(History *history, SendAction::Type type);
@@ -713,6 +338,10 @@ public:
 	void deleteContextItem(bool forEveryone);
 	void deleteSelectedItems(bool forEveryone);
 
+	// Float player interface.
+	bool wheelEventFromFloatPlayer(QEvent *e, Window::Column myColumn, Window::Column playerColumn) override;
+	QRect rectForFloatPlayer(Window::Column myColumn, Window::Column playerColumn) override;
+
 	void app_sendBotCallback(const HistoryMessageReplyMarkup::Button *button, const HistoryItem *msg, int row, int col);
 
 	void ui_repaintHistoryItem(const HistoryItem *item);
@@ -742,7 +371,6 @@ protected:
 	void leaveEventHook(QEvent *e) override;
 	void mouseReleaseEvent(QMouseEvent *e) override;
 	void mouseMoveEvent(QMouseEvent *e) override;
-	void contextMenuEvent(QContextMenuEvent *e) override;
 
 signals:
 	void cancelled();
@@ -767,7 +395,6 @@ public slots:
 	void onPreviewTimeout();
 
 	void peerUpdated(PeerData *data);
-	void onFullPeerUpdated(PeerData *data);
 
 	void onPhotoUploaded(const FullMsgId &msgId, bool silent, const MTPInputFile &file);
 	void onDocumentUploaded(const FullMsgId &msgId, bool silent, const MTPInputFile &file);
@@ -856,7 +483,12 @@ private:
 		bool allFilesForCompress = true;
 	};
 
+	void fullPeerUpdated(PeerData *peer);
 	void topBarClick();
+	void toggleTabbedSelectorMode();
+	void updateTabbedSelectorSectionShown();
+	void recountChatWidth();
+	void setReportSpamStatus(DBIPeerReportSpamStatus status);
 
 	void animationCallback();
 	void updateOverStates(QPoint pos);
@@ -884,6 +516,8 @@ private:
 	// like send button, emoji button and others.
 	void moveFieldControls();
 	void updateFieldSize();
+	void updateTabbedSelectorToggleTooltipGeometry();
+	void checkTabbedSelectorToggleTooltip();
 
 	bool historyHasNotFreezedUnreadBar(History *history) const;
 	bool canWriteMessage() const;
@@ -903,13 +537,12 @@ private:
 	void hideSelectorControlsAnimated();
 	int countMembersDropdownHeightMax() const;
 
-	gsl::not_null<Window::Controller*> _controller;
-
 	MsgId _replyToId = 0;
 	Text _replyToName;
 	int _replyToNameVersion = 0;
 	void updateReplyToName();
 
+	int _chatWidth = 0;
 	MsgId _editMsgId = 0;
 
 	HistoryItem *_replyEditMsg = nullptr;
@@ -1003,7 +636,8 @@ private:
 		ScrollChangeType type;
 		int value;
 	};
-	void updateListSize(bool initial = false, bool loadedDown = false, const ScrollChange &change = { ScrollChangeNone, 0 });
+	void updateHistoryGeometry(bool initial = false, bool loadedDown = false, const ScrollChange &change = { ScrollChangeNone, 0 });
+	void updateListSize();
 
 	// Does any of the shown histories has this flag set.
 	bool hasPendingResizedItems() const {
@@ -1013,6 +647,13 @@ private:
 	// Counts scrollTop for placing the scroll right at the unread
 	// messages bar, choosing from _history and _migrated unreadBar.
 	int unreadBarTop() const;
+	int itemTopForHighlight(gsl::not_null<HistoryItem*> item) const;
+	void scrollToCurrentVoiceMessage(FullMsgId fromId, FullMsgId toId);
+
+	// Scroll to current y without updating the _lastUserScrolled time.
+	// Used to distinguish between user scrolls and syntetic scrolls.
+	// This one is syntetic.
+	void synteticScrollToY(int y);
 
 	void saveGifDone(DocumentData *doc, const MTPBool &result);
 
@@ -1058,19 +699,25 @@ private:
 		setFieldText(TextWithTags(), events, undoHistoryAction);
 	}
 
+	HistoryItem *getItemFromHistoryOrMigrated(MsgId genericMsgId) const;
+	void animatedScrollToItem(MsgId msgId);
+	void animatedScrollToY(int scrollTo, HistoryItem *attachTo = nullptr);
+	void highlightMessage(HistoryItem *context);
 	void updateDragAreas();
 
 	// when scroll position or scroll area size changed this method
 	// updates the boundings of the visible area in HistoryInner
 	void visibleAreaUpdated();
+	int countInitialScrollTop();
+	int countAutomaticScrollTop();
+	void preloadHistoryByScroll();
+	void checkReplyReturns();
+	void scrollToAnimationCallback(FullMsgId attachToId);
 
 	bool readyToForward() const;
 	bool hasSilentToggle() const;
 
 	PeerData *_peer = nullptr;
-
-	// cache current _peer in _clearPeer when showing clear history box
-	PeerData *_clearPeer = nullptr;
 
 	ChannelId _channel = NoChannel;
 	bool _canSendMessages = false;
@@ -1091,12 +738,17 @@ private:
 	QPointer<HistoryInner> _list;
 	History *_migrated = nullptr;
 	History *_history = nullptr;
-	bool _histInited = false; // initial updateListSize() called
+	bool _historyInited = false; // Initial updateHistoryGeometry() was called.
+	bool _updateHistoryGeometryRequired = false; // If updateListSize() was called without updateHistoryGeometry().
 	int _addToScroll = 0;
 
-	int _lastScroll = 0;// gifs optimization
+	int _lastScrollTop = 0; // gifs optimization
 	TimeMs _lastScrolled = 0;
 	QTimer _updateHistoryItems;
+
+	TimeMs _lastUserScrolled = 0;
+	bool _synteticScrollEvent = false;
+	Animation _scrollToAnimation;
 
 	Animation _historyDownShown;
 	bool _historyDownIsShown = false;
@@ -1120,7 +772,7 @@ private:
 	bool showRecordButton() const;
 	bool showInlineBotCancel() const;
 
-	object_ptr<ReportSpamPanel> _reportSpamPanel;
+	object_ptr<ReportSpamPanel> _reportSpamPanel = { nullptr };
 
 	object_ptr<Ui::SendButton> _send;
 	object_ptr<Ui::FlatButton> _unblock;
@@ -1130,7 +782,9 @@ private:
 	mtpRequestId _unblockRequest = 0;
 	mtpRequestId _reportSpamRequest = 0;
 	object_ptr<Ui::IconButton> _attachToggle;
-	object_ptr<Ui::EmojiButton> _attachEmoji;
+	object_ptr<Ui::EmojiButton> _tabbedSelectorToggle;
+	object_ptr<Ui::ImportantTooltip> _tabbedSelectorToggleTooltip = { nullptr };
+	bool _tabbedSelectorToggleTooltipShown = false;
 	object_ptr<Ui::IconButton> _botKeyboardShow;
 	object_ptr<Ui::IconButton> _botKeyboardHide;
 	object_ptr<Ui::IconButton> _botCommandStart;
@@ -1161,11 +815,14 @@ private:
 	QTimer _membersDropdownShowTimer;
 
 	object_ptr<InlineBots::Layout::Widget> _inlineResults = { nullptr };
-	object_ptr<ChatHelpers::EmojiPanel> _emojiPanel;
+	object_ptr<ChatHelpers::TabbedPanel> _tabbedPanel;
+	object_ptr<ChatHelpers::TabbedSection> _tabbedSection = { nullptr };
+	QPointer<ChatHelpers::TabbedSelector> _tabbedSelector;
+	bool _tabbedSectionUsed = false;
 	DragState _attachDrag = DragStateNone;
 	object_ptr<DragArea> _attachDragDocument, _attachDragPhoto;
 
-	int32 _selCount; // < 0 - text selected, focus list, not _field
+	bool _nonEmptySelection = false;
 
 	TaskQueue _fileLoader;
 	TextUpdateEvents _textUpdateEvents = (TextUpdateEvent::SaveDraft | TextUpdateEvent::SendTyping);
@@ -1195,6 +852,7 @@ private:
 	QTimer _saveDraftTimer, _saveCloudDraftTimer;
 
 	object_ptr<Ui::PlainShadow> _topShadow;
+	object_ptr<Ui::PlainShadow> _rightShadow = { nullptr };
 	bool _inGrab = false;
 
 };

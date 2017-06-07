@@ -31,7 +31,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "history/history_location_manager.h"
 #include "storage/localstorage.h"
 #include "passcodewidget.h"
-#include "core/task_queue.h"
+#include "base/task_queue.h"
 
 #include <Shobjidl.h>
 #include <shellapi.h>
@@ -527,13 +527,6 @@ void finish() {
 	EventFilter::destroy();
 }
 
-void SetWatchingMediaKeys(bool watching) {
-}
-
-bool TransparentWindowsSupported(QPoint globalPosition) {
-	return true;
-}
-
 namespace ThirdParty {
 
 void start() {
@@ -652,7 +645,7 @@ void psNewVersion() {
 }
 
 void psExecUpdater() {
-	QString targs = qsl("-update");
+	QString targs = qsl("-update -exename \"") + cExeName() + '"';
 	if (cLaunchMode() == LaunchModeAutoStart) targs += qsl(" -autostart");
 	if (cDebug()) targs += qsl(" -debug");
 	if (cStartInTray()) targs += qsl(" -startintray");

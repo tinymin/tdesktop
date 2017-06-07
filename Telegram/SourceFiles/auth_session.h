@@ -20,6 +20,8 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
+#include "base/timer.h"
+
 namespace Storage {
 class Downloader;
 } // namespace Storage
@@ -28,13 +30,18 @@ namespace Window {
 namespace Notifications {
 class System;
 } // namespace Notifications
+enum class Column;
 } // namespace Window
 
-enum class EmojiPanelTab {
-	Emoji,
-	Stickers,
-	Gifs,
-};
+namespace Calls {
+class Instance;
+} // namespace Calls
+
+namespace ChatHelpers {
+enum class SelectorTab;
+} // namespace ChatHelpers
+
+class ApiWrap;
 
 class AuthSessionData final {
 public:
@@ -63,17 +70,61 @@ public:
 	void setLastSeenWarningSeen(bool lastSeenWarningSeen) {
 		_variables.lastSeenWarningSeen = lastSeenWarningSeen;
 	}
-	EmojiPanelTab emojiPanelTab() const {
-		return _variables.emojiPanelTab;
+	ChatHelpers::SelectorTab selectorTab() const {
+		return _variables.selectorTab;
 	}
-	void setEmojiPanelTab(EmojiPanelTab tab) {
-		_variables.emojiPanelTab = tab;
+	void setSelectorTab(ChatHelpers::SelectorTab tab) {
+		_variables.selectorTab = tab;
+	}
+	bool tabbedSelectorSectionEnabled() const {
+		return _variables.tabbedSelectorSectionEnabled;
+	}
+	void setTabbedSelectorSectionEnabled(bool enabled) {
+		_variables.tabbedSelectorSectionEnabled = enabled;
+	}
+	void setLastTimeVideoPlayedAt(TimeMs time) {
+		_lastTimeVideoPlayedAt = time;
+	}
+	TimeMs lastTimeVideoPlayedAt() const {
+		return _lastTimeVideoPlayedAt;
+	}
+	void setSoundOverride(const QString &key, const QString &path) {
+		_variables.soundOverrides.insert(key, path);
+	}
+	void clearSoundOverrides() {
+		_variables.soundOverrides.clear();
+	}
+	QString getSoundPath(const QString &key) const;
+	void setTabbedSelectorSectionTooltipShown(int shown) {
+		_variables.tabbedSelectorSectionTooltipShown = shown;
+	}
+	int tabbedSelectorSectionTooltipShown() const {
+		return _variables.tabbedSelectorSectionTooltipShown;
+	}
+	void setFloatPlayerColumn(Window::Column column) {
+		_variables.floatPlayerColumn = column;
+	}
+	Window::Column floatPlayerColumn() const {
+		return _variables.floatPlayerColumn;
+	}
+	void setFloatPlayerCorner(RectPart corner) {
+		_variables.floatPlayerCorner = corner;
+	}
+	RectPart floatPlayerCorner() const {
+		return _variables.floatPlayerCorner;
 	}
 
 private:
 	struct Variables {
+		Variables();
+
 		bool lastSeenWarningSeen = false;
-		EmojiPanelTab emojiPanelTab = EmojiPanelTab::Emoji;
+		ChatHelpers::SelectorTab selectorTab;
+		bool tabbedSelectorSectionEnabled = true;
+		int tabbedSelectorSectionTooltipShown = 0;
+		QMap<QString, QString> soundOverrides;
+		Window::Column floatPlayerColumn;
+		RectPart floatPlayerCorner;
 	};
 
 	base::Variable<bool> _contactsLoaded = { false };
@@ -81,10 +132,11 @@ private:
 	base::Observable<void> _moreChatsLoaded;
 	base::Observable<void> _savedGifsUpdated;
 	Variables _variables;
+	TimeMs _lastTimeVideoPlayedAt = 0;
 
 };
 
-class AuthSession final {
+class AuthSession final : private base::Subscriber {
 public:
 	AuthSession(UserId userId);
 
@@ -120,13 +172,31 @@ public:
 	AuthSessionData &data() {
 		return _data;
 	}
+	void saveDataDelayed(TimeMs delay);
+
+	ApiWrap &api() {
+		return *_api;
+	}
+
+	Calls::Instance &calls() {
+		return *_calls;
+	}
+
+	void checkAutoLock();
+	void checkAutoLockIn(TimeMs time);
 
 	~AuthSession();
 
 private:
-	UserId _userId = 0;
+	const UserId _userId = 0;
 	AuthSessionData _data;
+	base::Timer _saveDataTimer;
 
+	TimeMs _shouldLockAt = 0;
+	base::Timer _autoLockTimer;
+
+	const std::unique_ptr<ApiWrap> _api;
+	const std::unique_ptr<Calls::Instance> _calls;
 	const std::unique_ptr<Storage::Downloader> _downloader;
 	const std::unique_ptr<Window::Notifications::System> _notifications;
 

@@ -221,7 +221,6 @@ namespace App {
 
 	void initMedia();
 	void deinitMedia();
-	void playSound();
 
 	void checkImageCacheSize();
 
@@ -234,7 +233,6 @@ namespace App {
 	};
 	void quit();
 	bool quitting();
-	void allDraftsSaved();
 	LaunchState launchState();
 	void setLaunchState(LaunchState state);
 	void restart();
@@ -270,6 +268,7 @@ namespace App {
 
 	void regGifItem(Media::Clip::Reader *reader, HistoryItem *item);
 	void unregGifItem(Media::Clip::Reader *reader);
+	void stopRoundVideoPlayback();
 	void stopGifItems();
 
 	void regMuted(PeerData *peer, int32 changeIn);
@@ -281,28 +280,6 @@ namespace App {
 	QNetworkProxy getHttpProxySettings();
 #endif // !TDESKTOP_DISABLE_NETWORK_PROXY
 	void setProxySettings(QTcpSocket &socket);
-
-	enum class RectPart {
-		None        = 0x000,
-		TopLeft     = 0x001,
-		Top         = 0x002,
-		TopRight    = 0x004,
-		Left        = 0x008,
-		Center      = 0x010,
-		Right       = 0x020,
-		BottomLeft  = 0x040,
-		Bottom      = 0x080,
-		BottomRight = 0x100,
-		TopFull     = 0x007,
-		LeftFull    = 0x049,
-		RightFull   = 0x124,
-		BottomFull  = 0x1c0,
-		NoTopBottom = 0x038,
-		NoLeftRight = 0x092,
-		Full        = 0x1ff,
-	};
-	Q_DECLARE_FLAGS(RectParts, RectPart);
-	Q_DECLARE_OPERATORS_FOR_FLAGS(RectParts);
 
 	void complexOverlayRect(Painter &p, QRect rect, ImageRoundRadius radius, ImageRoundCorners corners);
 	void complexLocationRect(Painter &p, QRect rect, ImageRoundRadius radius, ImageRoundCorners corners);

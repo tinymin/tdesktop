@@ -23,7 +23,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "structs.h"
 #include "dialogs/dialogs_common.h"
 #include "ui/effects/send_action_animations.h"
-#include "core/observer.h"
+#include "base/observer.h"
 
 void historyInit();
 
@@ -110,6 +110,7 @@ enum HistoryMediaType {
 	MediaTypePhoto,
 	MediaTypeVideo,
 	MediaTypeContact,
+	MediaTypeCall,
 	MediaTypeFile,
 	MediaTypeGif,
 	MediaTypeSticker,
@@ -124,31 +125,18 @@ enum HistoryMediaType {
 };
 
 enum MediaOverviewType {
-	OverviewPhotos     = 0,
-	OverviewVideos     = 1,
-	OverviewMusicFiles = 2,
-	OverviewFiles      = 3,
-	OverviewVoiceFiles = 4,
-	OverviewLinks      = 5,
-	OverviewChatPhotos = 6,
+	OverviewPhotos          = 0,
+	OverviewVideos          = 1,
+	OverviewMusicFiles      = 2,
+	OverviewFiles           = 3,
+	OverviewVoiceFiles      = 4,
+	OverviewLinks           = 5,
+	OverviewChatPhotos      = 6,
+	OverviewRoundVoiceFiles = 7,
+	OverviewGIFs            = 8,
 
 	OverviewCount
 };
-
-inline MTPMessagesFilter typeToMediaFilter(MediaOverviewType &type) {
-	switch (type) {
-	case OverviewPhotos: return MTP_inputMessagesFilterPhotos();
-	case OverviewVideos: return MTP_inputMessagesFilterVideo();
-	case OverviewMusicFiles: return MTP_inputMessagesFilterMusic();
-	case OverviewFiles: return MTP_inputMessagesFilterDocument();
-	case OverviewVoiceFiles: return MTP_inputMessagesFilterVoice();
-	case OverviewLinks: return MTP_inputMessagesFilterUrl();
-	case OverviewChatPhotos: return MTP_inputMessagesFilterChatPhotos();
-	case OverviewCount: break;
-	default: type = OverviewCount; break;
-	}
-	return MTPMessagesFilter();
-}
 
 struct TextWithTags {
 	struct Tag {
@@ -621,14 +609,13 @@ private:
 
 class HistoryBlock {
 public:
-	HistoryBlock(History *hist) : history(hist), _indexInHistory(-1) {
+	HistoryBlock(gsl::not_null<History*> history) : _history(history) {
 	}
 
 	HistoryBlock(const HistoryBlock &) = delete;
 	HistoryBlock &operator=(const HistoryBlock &) = delete;
 
-	typedef QVector<HistoryItem*> Items;
-	Items items;
+	QVector<HistoryItem*> items;
 
 	void clear(bool leaveItems = false);
 	~HistoryBlock() {
@@ -637,31 +624,45 @@ public:
 	void removeItem(HistoryItem *item);
 
 	int resizeGetHeight(int newWidth, bool resizeAllItems);
-	int y = 0;
-	int height = 0;
-	History *history;
+	int y() const {
+		return _y;
+	}
+	void setY(int y) {
+		_y = y;
+	}
+	int height() const {
+		return _height;
+	}
+	gsl::not_null<History*> history() const {
+		return _history;
+	}
 
 	HistoryBlock *previousBlock() const {
-		t_assert(_indexInHistory >= 0);
+		Expects(_indexInHistory >= 0);
 
-		return (_indexInHistory > 0) ? history->blocks.at(_indexInHistory - 1) : nullptr;
+		return (_indexInHistory > 0) ? _history->blocks.at(_indexInHistory - 1) : nullptr;
 	}
 	HistoryBlock *nextBlock() const {
-		t_assert(_indexInHistory >= 0);
+		Expects(_indexInHistory >= 0);
 
-		return (_indexInHistory + 1 < history->blocks.size()) ? history->blocks.at(_indexInHistory + 1) : nullptr;
+		return (_indexInHistory + 1 < _history->blocks.size()) ? _history->blocks.at(_indexInHistory + 1) : nullptr;
 	}
 	void setIndexInHistory(int index) {
 		_indexInHistory = index;
 	}
 	int indexInHistory() const {
-		t_assert(_indexInHistory >= 0);
-		t_assert(history->blocks.at(_indexInHistory) == this);
+		Expects(_indexInHistory >= 0);
+		Expects(_indexInHistory < _history->blocks.size());
+		Expects(_history->blocks[_indexInHistory] == this);
 
 		return _indexInHistory;
 	}
 
 protected:
-	int _indexInHistory;
+	const gsl::not_null<History*> _history;
+
+	int _y = 0;
+	int _height = 0;
+	int _indexInHistory = -1;
 
 };

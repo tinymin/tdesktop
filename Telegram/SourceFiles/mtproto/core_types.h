@@ -100,7 +100,18 @@ public:
 
 private:
 	static uint32 _padding(uint32 requestSize) {
+#ifdef TDESKTOP_MTPROTO_OLD
 		return ((8 + requestSize) & 0x03) ? (4 - ((8 + requestSize) & 0x03)) : 0;
+#else // TDESKTOP_MTPROTO_OLD
+		auto result = ((8 + requestSize) & 0x03) ? (4 - ((8 + requestSize) & 0x03)) : 0;
+
+		// At least 12 bytes of random padding.
+		if (result < 3) {
+			result += 4;
+		}
+
+		return result;
+#endif // TDESKTOP_MTPROTO_OLD
 	}
 
 };
@@ -119,23 +130,6 @@ inline void mtpRequest::write(mtpBuffer &to) const {
     memcpy(to.data() + was, value->constData() + 8, s * sizeof(mtpPrime));
 }
 
-class mtpResponse : public mtpBuffer {
-public:
-	mtpResponse() {
-	}
-	mtpResponse(const mtpBuffer &v) : mtpBuffer(v) {
-	}
-	mtpResponse &operator=(const mtpBuffer &v) {
-		mtpBuffer::operator=(v);
-		return (*this);
-	}
-	bool needAck() const {
-		if (size() < 8) return false;
-		uint32 seqNo = *(uint32*)(constData() + 6);
-		return (seqNo & 0x01) ? true : false;
-	}
-};
-
 using mtpPreRequestMap = QMap<mtpRequestId, mtpRequest>;
 using mtpRequestMap = QMap<mtpMsgId, mtpRequest>;
 using mtpMsgIdsSet = QMap<mtpMsgId, bool>;
@@ -153,8 +147,6 @@ public:
 		return size() ? (--e).key() : 0;
 	}
 };
-
-using mtpResponseMap = QMap<mtpRequestId, mtpResponse>;
 
 class mtpErrorUnexpected : public Exception {
 public:
@@ -726,6 +718,16 @@ inline MTPbytes MTP_bytes(const QByteArray &v) {
 inline MTPbytes MTP_bytes(QByteArray &&v) {
 	return MTPbytes(std::move(v));
 }
+inline MTPbytes MTP_bytes(base::const_byte_span bytes) {
+	return MTP_bytes(QByteArray(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+}
+inline MTPbytes MTP_bytes(const std::vector<gsl::byte> &bytes) {
+	return MTP_bytes(gsl::make_span(bytes));
+}
+template <size_t N>
+inline MTPbytes MTP_bytes(const std::array<gsl::byte, N> &bytes) {
+	return MTP_bytes(gsl::make_span(bytes));
+}
 
 inline bool operator==(const MTPstring &a, const MTPstring &b) {
 	return a.v == b.v;
@@ -740,6 +742,15 @@ inline QString qs(const MTPstring &v) {
 
 inline QByteArray qba(const MTPstring &v) {
 	return v.v;
+}
+
+inline base::const_byte_span bytesFromMTP(const MTPbytes &v) {
+	return gsl::as_bytes(gsl::make_span(v.v));
+}
+
+inline std::vector<gsl::byte> byteVectorFromMTP(const MTPbytes &v) {
+	auto bytes = bytesFromMTP(v);
+	return std::vector<gsl::byte>(bytes.cbegin(), bytes.cend());
 }
 
 template <typename T>

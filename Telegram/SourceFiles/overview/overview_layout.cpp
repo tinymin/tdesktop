@@ -23,8 +23,8 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "styles/style_overview.h"
 #include "styles/style_history.h"
 #include "core/file_utilities.h"
-#include "boxes/addcontactbox.h"
-#include "boxes/confirmbox.h"
+#include "boxes/add_contact_box.h"
+#include "boxes/confirm_box.h"
 #include "lang.h"
 #include "mainwidget.h"
 #include "application.h"
@@ -242,7 +242,7 @@ void Photo::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 		if (_goodLoaded || _data->thumb->loaded()) {
 			auto img = (_data->loaded() ? _data->full : (_data->medium->loaded() ? _data->medium : _data->thumb))->pix().toImage();
 			if (!_goodLoaded) {
-				img = Images::prepareBlur(img);
+				img = Images::prepareBlur(std::move(img));
 			}
 			if (img.width() == img.height()) {
 				if (img.width() != size) {
@@ -344,7 +344,7 @@ void Video::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 		_thumbLoaded = thumbLoaded;
 
 		if (_thumbLoaded && !_data->thumb->isNull()) {
-			int32 size = _width * cIntRetinaFactor();
+			auto size = _width * cIntRetinaFactor();
 			auto img = Images::prepareBlur(_data->thumb->pix().toImage());
 			if (img.width() == img.height()) {
 				if (img.width() != size) {
@@ -643,8 +643,8 @@ void Voice::getState(ClickHandlerPtr &link, HistoryCursorState &cursor, int x, i
 }
 
 void Voice::updateName() {
-	int32 version = 0;
-	if (const HistoryMessageForwarded *fwd = _parent->Get<HistoryMessageForwarded>()) {
+	auto version = 0;
+	if (auto forwarded = _parent->Get<HistoryMessageForwarded>()) {
 		if (_parent->fromOriginal()->isChannel()) {
 			_name.setText(st::semiboldTextStyle, lng_forwarded_channel(lt_channel, App::peerName(_parent->fromOriginal())), _textNameOptions);
 		} else {
@@ -666,9 +666,9 @@ bool Voice::updateStatusText() {
 		statusSize = FileStatusSizeLoaded;
 		using State = Media::Player::State;
 		auto state = Media::Player::mixer()->currentState(AudioMsgId::Type::Voice);
-		if (state.id == AudioMsgId(_data, _parent->fullId()) && !Media::Player::IsStopped(state.state) && state.state != State::Finishing) {
+		if (state.id == AudioMsgId(_data, _parent->fullId()) && !Media::Player::IsStoppedOrStopping(state.state)) {
 			statusSize = -1 - (state.position / state.frequency);
-			realDuration = (state.duration / state.frequency);
+			realDuration = (state.length / state.frequency);
 			showPause = (state.state == State::Playing || state.state == State::Resuming || state.state == State::Starting);
 		}
 	} else {
@@ -950,9 +950,9 @@ bool Document::updateStatusText() {
 			statusSize = FileStatusSizeLoaded;
 			using State = Media::Player::State;
 			auto state = Media::Player::mixer()->currentState(AudioMsgId::Type::Song);
-			if (state.id == AudioMsgId(_data, _parent->fullId()) && !Media::Player::IsStopped(state.state) && state.state != State::Finishing) {
+			if (state.id == AudioMsgId(_data, _parent->fullId()) && !Media::Player::IsStoppedOrStopping(state.state)) {
 				statusSize = -1 - (state.position / state.frequency);
-				realDuration = (state.duration / state.frequency);
+				realDuration = (state.length / state.frequency);
 				showPause = (state.state == State::Playing || state.state == State::Resuming || state.state == State::Starting);
 			}
 			if (!showPause && (state.id == AudioMsgId(_data, _parent->fullId())) && Media::Player::instance()->isSeeking(AudioMsgId::Type::Song)) {
@@ -1139,7 +1139,8 @@ void Link::paint(Painter &p, const QRect &clip, TextSelection selection, const P
 			}
 			p.drawPixmapLeft(0, top, _width, pix);
 		} else if (_page && _page->document && !_page->document->thumb->isNull()) {
-			p.drawPixmapLeft(0, top, _width, _page->document->thumb->pixSingle(_pixw, _pixh, st::linksPhotoSize, st::linksPhotoSize, ImageRoundRadius::Small));
+			auto roundRadius = _page->document->isRoundVideo() ? ImageRoundRadius::Ellipse : ImageRoundRadius::Small;
+			p.drawPixmapLeft(0, top, _width, _page->document->thumb->pixSingle(_pixw, _pixh, st::linksPhotoSize, st::linksPhotoSize, roundRadius));
 		} else {
 			int32 index = _letter.isEmpty() ? 0 : (_letter.at(0).unicode() % 4);
 			switch (index) {

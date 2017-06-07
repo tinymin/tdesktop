@@ -24,7 +24,6 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "platform/platform_main_window.h"
 #include "core/single_timer.h"
 
-class MediaView;
 class PasscodeWidget;
 class MainWidget;
 class LayerStackWidget;
@@ -43,6 +42,7 @@ namespace Theme {
 struct BackgroundUpdate;
 class WarningWidget;
 } // namespace Theme
+class Controller;
 } // namespace Window
 
 namespace Ui {
@@ -78,6 +78,10 @@ public:
 	MainWindow();
 	~MainWindow();
 
+	Window::Controller *controller() const {
+		return _controller.get();
+	}
+
 	void firstShow();
 
 	void inactivePress(bool inactive);
@@ -85,7 +89,6 @@ public:
 
 	void setupPasscode();
 	void clearPasscode();
-	void checkAutoLockIn(int msec);
 	void setupIntro();
 	void setupMain(const MTPUser *user = nullptr);
 	void serviceNotification(const TextWithEntities &message, const MTPMessageMedia &media = MTP_messageMediaEmpty(), int32 date = 0, bool force = false);
@@ -103,7 +106,6 @@ public:
 	void activate();
 
 	void noIntro(Intro::Widget *was);
-	void noMain(MainWidget *was);
 	void noLayerStack(LayerStackWidget *was);
 	void layerFinishedHide(LayerStackWidget *was);
 
@@ -119,8 +121,6 @@ public:
 	TempDirState tempDirState();
 	TempDirState localStorageState();
 	void tempDirDelete(int task);
-
-	QImage iconLarge() const;
 
 	void sendPaths();
 
@@ -160,8 +160,6 @@ protected:
 	void updateControlsGeometry() override;
 
 public slots:
-	void checkAutoLock();
-
 	void showSettings();
 	void layerHidden();
 	void setInnerFocus();
@@ -189,14 +187,13 @@ signals:
 	void tempDirClearFailed(int task);
 	void checkNewAuthorization();
 
-private slots:
-	void onStateChanged(Qt::WindowState state);
-
-	void onWindowActiveChanged();
-
 private:
+	void checkAuthSession();
 	void showConnecting(const QString &text, const QString &reconnect = QString());
 	void hideConnecting();
+
+	void ensureLayerCreated();
+	void destroyLayerDelayed();
 
 	void themeUpdated(const Window::Theme::BackgroundUpdate &data);
 
@@ -215,6 +212,7 @@ private:
 	QList<DelayedServiceMsg> _delayedServiceMsgs;
 	mtpRequestId _serviceHistoryRequest = 0;
 
+	std::unique_ptr<Window::Controller> _controller;
 	object_ptr<PasscodeWidget> _passcode = { nullptr };
 	object_ptr<Intro::Widget> _intro = { nullptr };
 	object_ptr<MainWidget> _main = { nullptr };
@@ -228,9 +226,6 @@ private:
 
 	bool _inactivePress = false;
 	QTimer _inactiveTimer;
-
-	SingleTimer _autoLockTimer;
-	TimeMs _shouldLockAt = 0;
 
 };
 

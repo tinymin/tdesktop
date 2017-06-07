@@ -40,7 +40,7 @@ public:
 
 	void psFirstShow();
 	void psInitSysMenu();
-	void psUpdateSysMenu(Qt::WindowState state);
+	void updateSystemMenu(Qt::WindowState state);
 	void psUpdateMargins();
 
 	void psRefreshTaskbarIcon();
@@ -86,14 +86,14 @@ protected:
 	int32 screenNameChecksum(const QString &name) const override;
 	void unreadCounterChangedHook() override;
 
+	void stateChangedHook(Qt::WindowState state) override;
+
 	bool hasTrayIcon() const override {
 		return trayIcon;
 	}
 
 	QSystemTrayIcon *trayIcon = nullptr;
 	Ui::PopupMenu *trayIconMenu = nullptr;
-	QImage icon256, iconbig256;
-	QIcon wndIcon;
 
 	void psTrayMenuUpdated();
 	void psSetupTrayIcon();

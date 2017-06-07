@@ -29,7 +29,7 @@ enum class MediaInBubbleState {
 
 class HistoryMedia : public HistoryElement {
 public:
-	HistoryMedia(HistoryItem *parent) : _parent(parent) {
+	HistoryMedia(gsl::not_null<HistoryItem*> parent) : _parent(parent) {
 	}
 
 	virtual HistoryMediaType type() const = 0;
@@ -67,6 +67,12 @@ public:
 	virtual void draw(Painter &p, const QRect &r, TextSelection selection, TimeMs ms) const = 0;
 	virtual HistoryTextState getState(int x, int y, HistoryStateRequest request) const = 0;
 	virtual void updatePressed(int x, int y) {
+	}
+
+	virtual int32 addToOverview(AddToOverviewMethod method) {
+		return 0;
+	}
+	virtual void eraseFromOverview() {
 	}
 
 	// if we are in selecting items mode perhaps we want to
@@ -113,6 +119,9 @@ public:
 	}
 	virtual void stopInline() {
 	}
+	virtual bool isRoundVideoPlaying() const {
+		return false;
+	}
 
 	virtual void attachToParent() {
 	}
@@ -151,6 +160,13 @@ public:
 		return false;
 	}
 
+	// An attach media in a web page can provide an
+	// additional text to be displayed below the attach.
+	// For example duration / progress for video messages.
+	virtual QString additionalInfoString() const {
+		return QString();
+	}
+
 	int currentWidth() const {
 		return _width;
 	}
@@ -171,6 +187,10 @@ public:
 		return false;
 	}
 
+	virtual bool canEditCaption() const {
+		return false;
+	}
+
 	// Sometimes click on media in message is overloaded by the messsage:
 	// (for example it can open a link or a game instead of opening media)
 	// But the overloading click handler should be used only when media
@@ -181,8 +201,19 @@ public:
 	}
 
 protected:
-	HistoryItem *_parent;
+	int32 addToOneOverview(MediaOverviewType type, AddToOverviewMethod method) {
+		if (_parent->history()->addToOverview(type, _parent->id, method)) {
+			return (1 << type);
+		}
+		return 0;
+	}
+	void eraseFromOneOverview(MediaOverviewType type) {
+		_parent->history()->eraseFromOverview(type, _parent->id);
+	}
+
+	gsl::not_null<HistoryItem*> _parent;
 	int _width = 0;
 	MediaInBubbleState _inBubbleState = MediaInBubbleState::None;
+
 
 };

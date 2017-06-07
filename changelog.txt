@@ -1,3 +1,87 @@
+1.1.7 (30.05.17)
+
+- Improved video messages: radial playback progress, Picture-in-Picture support, duration countdown.
+- Voice and video messages now automatically play one after another.
+
+1.1.6 alpha (26.05.17)
+
+- Bug fixes and other minor improvements.
+
+1.1.5 alpha (26.05.17)
+
+- Bug fixes and other minor improvements.
+
+1.1.4 (24.05.17)
+
+- Fix a crash in animated history scrolling.
+- Fix a bug with pinned chat to supergroup upgrade.
+
+1.1.3 (24.05.17)
+
+- Improved video messages playback.
+- Video and audio messages play one after another.
+
+1.1.2 (17.05.17)
+
+- Emoji icon tooltip about hiding the sidebar.
+- Fix possible calls deadlock in Linux.
+- Preserve Emoji/Stickers/GIFs panel state between activations.
+
+1.1.1 alpha (17.05.17)
+
+- Emoji icon tooltip about hiding the sidebar.
+- Fix possible calls deadlock in Linux.
+
+1.1.0 (14.05.17)
+
+- Telegram Calls are now available on desktops: secure, crystal-clear, constantly improved by artificial intelligence.
+- The new Emoji, Stickers, and Saved GIFs panel becomes a separate space on the right when Telegram is running in a wide enough window.
+- Manage blocked users list in your supergroups.
+- Chat admins can delete messages by other members.
+
+1.0.38 alpha (13.05.17)
+
+- Fix crashes in Windows XP.
+- Fix calls in Linux without SSE4.1 support.
+- PulseAudio support in calls.
+- Bug fixes and other minor improvements.
+
+1.0.37 alpha (10.05.17)
+
+- Multiple crash fixes.
+
+1.0.36 alpha (09.05.17)
+
+- Telegram Calls are now available on desktops: secure, crystal-clear, constantly improved by artificial intelligence.
+- Bug fixes and other minor improvements.
+
+1.0.35 alpha (30.04.17)
+
+- Chat admins can delete other participants' messages.
+- Bug fixes and other minor improvements.
+
+1.0.34 alpha (21.04.17)
+
+- Bug fixes and other minor improvements.
+
+1.0.33 alpha (16.04.17)
+
+- Bug fixes and other minor improvements.
+
+1.0.32 alpha (12.04.17)
+
+- Testing a build with the latest API layer.
+- Bug fixes and other minor improvements.
+
+1.0.31 alpha (11.04.17)
+
+- Bug fixes and other minor improvements.
+
+1.0.30 alpha (11.04.17)
+
+- The new Emoji, Stickers, and Saved GIFs panel becomes a separate space on the right when Telegram is running in a wide enough window.
+- Manage blocked users list in your supergroups.
+
 1.0.29 (05.04.17)
 
 - Improved Emoji, Stickers, and Saved GIFs panel.

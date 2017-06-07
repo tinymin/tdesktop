@@ -20,14 +20,16 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 */
 #include "profile/profile_section_memento.h"
 #include "core/click_handler_types.h"
+#include "media/media_clip_reader.h"
 #include "observer_peer.h"
 #include "mainwindow.h"
 #include "mainwidget.h"
 #include "messenger.h"
-#include "boxes/confirmbox.h"
+#include "boxes/confirm_box.h"
 #include "layerwidget.h"
 #include "lang.h"
-#include "core/observer.h"
+#include "base/observer.h"
+#include "base/task_queue.h"
 
 Q_DECLARE_METATYPE(ClickHandlerPtr);
 Q_DECLARE_METATYPE(Qt::MouseButton);
@@ -347,8 +349,8 @@ void inlineKeyboardMoved(const HistoryItem *item, int oldKeyboardTop, int newKey
 }
 
 bool switchInlineBotButtonReceived(const QString &query, UserData *samePeerBot, MsgId samePeerReplyTo) {
-	if (auto m = App::main()) {
-		return m->notify_switchInlineBotButtonReceived(query, samePeerBot, samePeerReplyTo);
+	if (auto main = App::main()) {
+		return main->notify_switchInlineBotButtonReceived(query, samePeerBot, samePeerReplyTo);
 	}
 	return false;
 }
@@ -366,13 +368,23 @@ void historyMuteUpdated(History *history) {
 }
 
 void handlePendingHistoryUpdate() {
-	if (MainWidget *m = App::main()) {
-		m->notify_handlePendingHistoryUpdate();
+	if (auto main = App::main()) {
+		main->notify_handlePendingHistoryUpdate();
 	}
-	for_const (HistoryItem *item, Global::PendingRepaintItems()) {
+	for (auto item : base::take(Global::RefPendingRepaintItems())) {
 		Ui::repaintHistoryItem(item);
+
+		// Start the video if it is waiting for that.
+		if (item->pendingInitDimensions()) {
+			if (auto media = item->getMedia()) {
+				if (auto reader = media->getClipReader()) {
+					if (!reader->started() && reader->mode() == Media::Clip::Reader::Mode::Video) {
+						item->history()->resizeGetHeight(item->history()->width);
+					}
+				}
+			}
+		}
 	}
-	Global::RefPendingRepaintItems().clear();
 }
 
 void unreadCounterUpdated() {
@@ -410,7 +422,7 @@ struct Data {
 } // namespace internal
 } // namespace Sandbox
 
-Sandbox::internal::Data *SandboxData = nullptr;
+std::unique_ptr<Sandbox::internal::Data> SandboxData;
 uint64 SandboxUserTag = 0;
 
 namespace Sandbox {
@@ -496,7 +508,7 @@ void WorkingDirReady() {
 	}
 }
 
-object_ptr<SingleDelayedCall> MainThreadTaskHandler = { nullptr };
+object_ptr<SingleQueuedInvokation> MainThreadTaskHandler = { nullptr };
 
 void MainThreadTaskAdded() {
 	if (!started()) {
@@ -507,8 +519,10 @@ void MainThreadTaskAdded() {
 }
 
 void start() {
-	MainThreadTaskHandler.create(QCoreApplication::instance(), "onMainThreadTask");
-	SandboxData = new internal::Data();
+	MainThreadTaskHandler.create([] {
+		base::TaskQueue::ProcessMainTasks();
+	});
+	SandboxData = std::make_unique<internal::Data>();
 
 	SandboxData->LangSystemISO = psCurrentLanguage();
 	if (SandboxData->LangSystemISO.isEmpty()) SandboxData->LangSystemISO = qstr("en");
@@ -526,8 +540,7 @@ bool started() {
 }
 
 void finish() {
-	delete SandboxData;
-	SandboxData = nullptr;
+	SandboxData.reset();
 	MainThreadTaskHandler.destroy();
 }
 
@@ -585,11 +598,10 @@ namespace Global {
 namespace internal {
 
 struct Data {
-	uint64 LaunchId = 0;
-	SingleDelayedCall HandleHistoryUpdate = { App::app(), "call_handleHistoryUpdate" };
-	SingleDelayedCall HandleUnreadCounterUpdate = { App::app(), "call_handleUnreadCounterUpdate" };
-	SingleDelayedCall HandleDelayedPeerUpdates = { App::app(), "call_handleDelayedPeerUpdates" };
-	SingleDelayedCall HandleObservables = { App::app(), "call_handleObservables" };
+	SingleQueuedInvokation HandleHistoryUpdate = { [] { App::app()->call_handleHistoryUpdate(); } };
+	SingleQueuedInvokation HandleUnreadCounterUpdate = { [] { App::app()->call_handleUnreadCounterUpdate(); } };
+	SingleQueuedInvokation HandleDelayedPeerUpdates = { [] { App::app()->call_handleDelayedPeerUpdates(); } };
+	SingleQueuedInvokation HandleObservables = { [] { App::app()->call_handleObservables(); } };
 
 	Adaptive::WindowLayout AdaptiveWindowLayout = Adaptive::WindowLayout::Normal;
 	Adaptive::ChatLayout AdaptiveChatLayout = Adaptive::ChatLayout::Normal;
@@ -629,6 +641,12 @@ struct Data {
 	int32 StickersRecentLimit = 30;
 	int32 PinnedDialogsCountMax = 5;
 	QString InternalLinksDomain = qsl("https://t.me/");
+	int32 CallReceiveTimeoutMs = 20000;
+	int32 CallRingTimeoutMs = 90000;
+	int32 CallConnectTimeoutMs = 30000;
+	int32 CallPacketTimeoutMs = 10000;
+	bool PhoneCallsEnabled = true;
+	base::Observable<void> PhoneCallsEnabledChanged;
 
 	HiddenPinnedMessagesMap HiddenPinnedMessages;
 
@@ -680,10 +698,6 @@ struct Data {
 	base::Observable<void> UnreadCounterUpdate;
 	base::Observable<void> PeerChooseCancel;
 
-	float64 DialogsWidthRatio = 5. / 14;
-	base::Variable<bool> DialogsListFocused = { false };
-	base::Variable<bool> DialogsListDisplayForced = { false };
-
 };
 
 } // namespace internal
@@ -699,8 +713,6 @@ bool started() {
 
 void start() {
 	GlobalData = new internal::Data();
-
-	memset_rand(&GlobalData->LaunchId, sizeof(GlobalData->LaunchId));
 }
 
 void finish() {
@@ -708,11 +720,10 @@ void finish() {
 	GlobalData = nullptr;
 }
 
-DefineReadOnlyVar(Global, uint64, LaunchId);
-DefineRefVar(Global, SingleDelayedCall, HandleHistoryUpdate);
-DefineRefVar(Global, SingleDelayedCall, HandleUnreadCounterUpdate);
-DefineRefVar(Global, SingleDelayedCall, HandleDelayedPeerUpdates);
-DefineRefVar(Global, SingleDelayedCall, HandleObservables);
+DefineRefVar(Global, SingleQueuedInvokation, HandleHistoryUpdate);
+DefineRefVar(Global, SingleQueuedInvokation, HandleUnreadCounterUpdate);
+DefineRefVar(Global, SingleQueuedInvokation, HandleDelayedPeerUpdates);
+DefineRefVar(Global, SingleQueuedInvokation, HandleObservables);
 
 DefineVar(Global, Adaptive::WindowLayout, AdaptiveWindowLayout);
 DefineVar(Global, Adaptive::ChatLayout, AdaptiveChatLayout);
@@ -752,6 +763,12 @@ DefineVar(Global, int32, EditTimeLimit);
 DefineVar(Global, int32, StickersRecentLimit);
 DefineVar(Global, int32, PinnedDialogsCountMax);
 DefineVar(Global, QString, InternalLinksDomain);
+DefineVar(Global, int32, CallReceiveTimeoutMs);
+DefineVar(Global, int32, CallRingTimeoutMs);
+DefineVar(Global, int32, CallConnectTimeoutMs);
+DefineVar(Global, int32, CallPacketTimeoutMs);
+DefineVar(Global, bool, PhoneCallsEnabled);
+DefineRefVar(Global, base::Observable<void>, PhoneCallsEnabledChanged);
 
 DefineVar(Global, HiddenPinnedMessagesMap, HiddenPinnedMessages);
 
@@ -802,9 +819,5 @@ DefineRefVar(Global, base::Variable<DBIWorkMode>, WorkMode);
 DefineRefVar(Global, base::Observable<HistoryItem*>, ItemRemoved);
 DefineRefVar(Global, base::Observable<void>, UnreadCounterUpdate);
 DefineRefVar(Global, base::Observable<void>, PeerChooseCancel);
-
-DefineVar(Global, float64, DialogsWidthRatio);
-DefineRefVar(Global, base::Variable<bool>, DialogsListFocused);
-DefineRefVar(Global, base::Variable<bool>, DialogsListDisplayForced);
 
 } // namespace Global

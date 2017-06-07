@@ -377,10 +377,7 @@ void finish() {
 	_psEventFilter = nullptr;
 }
 
-void SetWatchingMediaKeys(bool watching) {
-}
-
-bool TransparentWindowsSupported(QPoint globalPosition) {
+bool TranslucentWindowsSupported(QPoint globalPosition) {
 	if (auto app = static_cast<QGuiApplication*>(QCoreApplication::instance())) {
 		if (auto native = app->platformNativeInterface()) {
 			if (auto desktop = QApplication::desktop()) {
@@ -459,7 +456,7 @@ void psRegisterCustomScheme() {
 				}
 			}
 			if (!iconExists) {
-				if (QFile(qsl(":/gui/art/icon256.png")).copy(icon)) {
+				if (QFile(qsl(":/gui/art/logo_256.png")).copy(icon)) {
 					DEBUG_LOG(("App Info: Icon copied to 'tdata'"));
 				}
 			}
@@ -544,8 +541,21 @@ bool _execUpdater(bool update = true, const QString &crashreport = QString()) {
 	QByteArray data(QFile::encodeName(cExeDir() + (update ? "Updater" : gExeName)));
 	memcpy(path, data.constData(), data.size());
 
-	char *args[MaxArgsCount] = {0}, p_noupdate[] = "-noupdate", p_autostart[] = "-autostart", p_debug[] = "-debug", p_tosettings[] = "-tosettings", p_key[] = "-key", p_path[] = "-workpath", p_startintray[] = "-startintray", p_testmode[] = "-testmode", p_crashreport[] = "-crashreport";
-	char p_datafile[MaxLen] = {0}, p_pathbuf[MaxLen] = {0}, p_crashreportbuf[MaxLen] = {0};
+	char *args[MaxArgsCount] = { 0 };
+	char p_noupdate[] = "-noupdate";
+	char p_autostart[] = "-autostart";
+	char p_debug[] = "-debug";
+	char p_tosettings[] = "-tosettings";
+	char p_key[] = "-key";
+	char p_datafile[MaxLen] = { 0 };
+	char p_path[] = "-workpath";
+	char p_pathbuf[MaxLen] = { 0 };
+	char p_startintray[] = "-startintray";
+	char p_testmode[] = "-testmode";
+	char p_crashreport[] = "-crashreport";
+	char p_crashreportbuf[MaxLen] = { 0 };
+	char p_exe[] = "-exename";
+	char p_exebuf[MaxLen] = { 0 };
 	int argIndex = 0;
 	args[argIndex++] = path;
 	if (!update) {
@@ -577,6 +587,12 @@ bool _execUpdater(bool update = true, const QString &crashreport = QString()) {
 			args[argIndex++] = p_crashreport;
 			args[argIndex++] = p_crashreportbuf;
 		}
+	}
+	QByteArray exef = QFile::encodeName(cExeName());
+	if (exef.size() > 0 && exef.size() < MaxLen) {
+		memcpy(p_exebuf, exef.constData(), exef.size());
+		args[argIndex++] = p_exe;
+		args[argIndex++] = p_exebuf;
 	}
 
 	Logs::closeMain();

@@ -1079,9 +1079,10 @@ struct FormattingAction {
 
 void FlatTextarea::processFormatting(int insertPosition, int insertEnd) {
 	// Tilde formatting.
-	auto regularFont = qsl("Open Sans"), semiboldFont = qsl("Open Sans Semibold");
-	bool tildeFormatting = !cRetina() && (font().pixelSize() == 13) && (font().family() == regularFont);
-	bool isTildeFragment = false;
+	auto tildeFormatting = !cRetina() && (font().pixelSize() == 13) && (font().family() == qstr("Open Sans"));
+	auto isTildeFragment = false;
+	auto tildeRegularFont = tildeFormatting ? qsl("Open Sans") : QString();
+	auto tildeFixedFont = tildeFormatting ? Fonts::GetOverride(qsl("Open Sans Semibold")) : QString();
 
 	// First tag handling (the one we inserted text to).
 	bool startTagFound = false;
@@ -1118,7 +1119,7 @@ void FlatTextarea::processFormatting(int insertPosition, int insertEnd) {
 
 				auto charFormat = fragment.charFormat();
 				if (tildeFormatting) {
-					isTildeFragment = (charFormat.fontFamily() == semiboldFont);
+					isTildeFragment = (charFormat.fontFamily() == tildeFixedFont);
 				}
 
 				auto fragmentText = fragment.text();
@@ -1202,7 +1203,7 @@ void FlatTextarea::processFormatting(int insertPosition, int insertEnd) {
 				c.mergeCharFormat(format);
 			} else if (action.type == ActionType::TildeFont) {
 				QTextCharFormat format;
-				format.setFontFamily(action.isTilde ? semiboldFont : regularFont);
+				format.setFontFamily(action.isTilde ? tildeFixedFont : tildeRegularFont);
 				c.mergeCharFormat(format);
 				insertPosition = action.intervalEnd;
 			}
@@ -1330,7 +1331,8 @@ void FlatTextarea::setPlaceholder(const QString &ph, int32 afterSymbols) {
 }
 
 void FlatTextarea::updatePlaceholder() {
-	auto placeholderVisible = (getTextWithTags().text.size() <= _phAfter);
+	auto textSize = (getTextWithTags().text.size() + textCursor().block().layout()->preeditAreaText().size());
+	auto placeholderVisible = (textSize <= _phAfter);
 	if (_placeholderVisible != placeholderVisible) {
 		_placeholderVisible = placeholderVisible;
 		_a_placeholderVisible.start([this] { update(); }, _placeholderVisible ? 0. : 1., _placeholderVisible ? 1. : 0., _st.phDuration);
@@ -1644,10 +1646,25 @@ QSize FlatInput::minimumSizeHint() const {
 }
 
 void FlatInput::updatePlaceholder() {
-	auto placeholderVisible = text().isEmpty();
+	auto hasText = !text().isEmpty();
+	if (!hasText) {
+		hasText = _lastPreEditTextNotEmpty;
+	} else {
+		_lastPreEditTextNotEmpty = false;
+	}
+	auto placeholderVisible = !hasText;
 	if (_placeholderVisible != placeholderVisible) {
 		_placeholderVisible = placeholderVisible;
 		_a_placeholderVisible.start([this] { update(); }, _placeholderVisible ? 0. : 1., _placeholderVisible ? 1. : 0., _st.phDuration);
+	}
+}
+
+void FlatInput::inputMethodEvent(QInputMethodEvent *e) {
+	QLineEdit::inputMethodEvent(e);
+	auto lastPreEditTextNotEmpty = !e->preeditString().isEmpty();
+	if (_lastPreEditTextNotEmpty != lastPreEditTextNotEmpty) {
+		_lastPreEditTextNotEmpty = lastPreEditTextNotEmpty;
+		updatePlaceholder();
 	}
 }
 
@@ -2126,9 +2143,11 @@ void InputArea::processDocumentContentsChange(int position, int charsAdded) {
 	int32 replacePosition = -1, replaceLen = 0;
 	EmojiPtr emoji = nullptr;
 
-	static QString regular = qsl("Open Sans"), semibold = qsl("Open Sans Semibold");
-	bool checkTilde = !cRetina() && (_inner->font().pixelSize() == 13) && (_inner->font().family() == regular);
-	bool wasTildeFragment = false;
+	// Tilde formatting.
+	auto tildeFormatting = !cRetina() && (font().pixelSize() == 13) && (font().family() == qstr("Open Sans"));
+	auto isTildeFragment = false;
+	auto tildeRegularFont = tildeFormatting ? qsl("Open Sans") : QString();
+	auto tildeFixedFont = tildeFormatting ? Fonts::GetOverride(qsl("Open Sans Semibold")) : QString();
 
 	QTextDocument *doc(_inner->document());
 	QTextCursor c(_inner->textCursor());
@@ -2148,8 +2167,8 @@ void InputArea::processDocumentContentsChange(int position, int charsAdded) {
 					continue;
 				}
 
-				if (checkTilde) {
-					wasTildeFragment = (fragment.charFormat().fontFamily() == semibold);
+				if (tildeFormatting) {
+					isTildeFragment = (fragment.charFormat().fontFamily() == tildeFixedFont);
 				}
 
 				QString t(fragment.text());
@@ -2167,9 +2186,9 @@ void InputArea::processDocumentContentsChange(int position, int charsAdded) {
 						break;
 					}
 
-					if (checkTilde && fp >= position) { // tilde fix in OpenSans
+					if (tildeFormatting && fp >= position) { // tilde fix in OpenSans
 						bool tilde = (ch->unicode() == '~');
-						if ((tilde && !wasTildeFragment) || (!tilde && wasTildeFragment)) {
+						if ((tilde && !isTildeFragment) || (!tilde && isTildeFragment)) {
 							if (replacePosition < 0) {
 								replacePosition = fp;
 								replaceLen = 1;
@@ -2201,7 +2220,7 @@ void InputArea::processDocumentContentsChange(int position, int charsAdded) {
 				insertEmoji(emoji, c);
 			} else {
 				QTextCharFormat format;
-				format.setFontFamily(wasTildeFragment ? regular : semibold);
+				format.setFontFamily(isTildeFragment ? tildeRegularFont : tildeFixedFont);
 				c.mergeCharFormat(format);
 			}
 			charsAdded -= replacePosition + replaceLen - position;
@@ -2704,7 +2723,7 @@ void InputField::setFocused(bool focused) {
 }
 
 void InputField::startPlaceholderAnimation() {
-	auto placeholderShifted = (_focused && _st.placeholderScale > 0.) || !getLastText().isEmpty() || _forcePlaceholderHidden;
+	auto placeholderShifted = _forcePlaceholderHidden || (_focused && _st.placeholderScale > 0.) || !getLastText().isEmpty();
 	if (_placeholderShifted != placeholderShifted) {
 		_placeholderShifted = placeholderShifted;
 		_a_placeholderShifted.start([this] { update(); }, _placeholderShifted ? 0. : 1., _placeholderShifted ? 1. : 0., _st.duration);
@@ -2857,9 +2876,11 @@ void InputField::processDocumentContentsChange(int position, int charsAdded) {
 	EmojiPtr emoji = nullptr;
 	bool newlineFound = false;
 
-	static QString regular = qsl("Open Sans"), semibold = qsl("Open Sans Semibold"), space(' ');
-	bool checkTilde = !cRetina() && (_inner->font().pixelSize() == 13) && (_inner->font().family() == regular);
-	bool wasTildeFragment = false;
+	// Tilde formatting.
+	auto tildeFormatting = !cRetina() && (font().pixelSize() == 13) && (font().family() == qstr("Open Sans"));
+	auto isTildeFragment = false;
+	auto tildeRegularFont = tildeFormatting ? qsl("Open Sans") : QString();
+	auto tildeFixedFont = tildeFormatting ? Fonts::GetOverride(qsl("Open Sans Semibold")) : QString();
 
 	QTextDocument *doc(_inner->document());
 	QTextCursor c(_inner->textCursor());
@@ -2879,8 +2900,8 @@ void InputField::processDocumentContentsChange(int position, int charsAdded) {
 					continue;
 				}
 
-				if (checkTilde) {
-					wasTildeFragment = (fragment.charFormat().fontFamily() == semibold);
+				if (tildeFormatting) {
+					isTildeFragment = (fragment.charFormat().fontFamily() == tildeFixedFont);
 				}
 
 				QString t(fragment.text());
@@ -2910,9 +2931,9 @@ void InputField::processDocumentContentsChange(int position, int charsAdded) {
 						break;
 					}
 
-					if (checkTilde && fp >= position) { // tilde fix in OpenSans
+					if (tildeFormatting && fp >= position) { // tilde fix in OpenSans
 						bool tilde = (ch->unicode() == '~');
-						if ((tilde && !wasTildeFragment) || (!tilde && wasTildeFragment)) {
+						if ((tilde && !isTildeFragment) || (!tilde && isTildeFragment)) {
 							if (replacePosition < 0) {
 								replacePosition = fp;
 								replaceLen = 1;
@@ -2948,14 +2969,14 @@ void InputField::processDocumentContentsChange(int position, int charsAdded) {
 			c.setPosition(replacePosition + replaceLen, QTextCursor::KeepAnchor);
 			if (newlineFound) {
 				QTextCharFormat format;
-				format.setFontFamily(regular);
+				format.setFontFamily(font().family());
 				c.mergeCharFormat(format);
-				c.insertText(space);
+				c.insertText(" ");
 			} else if (emoji) {
 				insertEmoji(emoji, c);
 			} else {
 				QTextCharFormat format;
-				format.setFontFamily(wasTildeFragment ? regular : semibold);
+				format.setFontFamily(isTildeFragment ? tildeRegularFont : tildeFixedFont);
 				c.mergeCharFormat(format);
 			}
 			charsAdded -= replacePosition + replaceLen - position;
@@ -3490,6 +3511,12 @@ void MaskedInputField::contextMenuEvent(QContextMenuEvent *e) {
 	}
 }
 
+void MaskedInputField::inputMethodEvent(QInputMethodEvent *e) {
+	QLineEdit::inputMethodEvent(e);
+	_lastPreEditText = e->preeditString();
+	update();
+}
+
 void MaskedInputField::showError() {
 	setErrorShown(true);
 	if (!hasFocus()) {
@@ -3533,7 +3560,7 @@ void MaskedInputField::setPlaceholderHidden(bool forcePlaceholderHidden) {
 }
 
 void MaskedInputField::startPlaceholderAnimation() {
-	auto placeholderShifted = (_focused && _st.placeholderScale > 0.) || !getLastText().isEmpty() || _forcePlaceholderHidden;
+	auto placeholderShifted = _forcePlaceholderHidden || (_focused && _st.placeholderScale > 0.) || !getLastText().isEmpty();
 	if (_placeholderShifted != placeholderShifted) {
 		_placeholderShifted = placeholderShifted;
 		_a_placeholderShifted.start([this] { update(); }, _placeholderShifted ? 0. : 1., _placeholderShifted ? 1. : 0., _st.duration);
@@ -3676,8 +3703,8 @@ PhonePartInput::PhonePartInput(QWidget *parent, const style::InputField &st) : M
 }
 
 void PhonePartInput::paintAdditionalPlaceholder(Painter &p, TimeMs ms) {
-	auto t = getLastText();
 	if (!_pattern.isEmpty()) {
+		auto t = getDisplayedText();
 		auto ph = _additionalPlaceholder.mid(t.size());
 		if (!ph.isEmpty()) {
 			p.setClipRect(rect());
@@ -3896,7 +3923,7 @@ void PhoneInput::clearText() {
 
 void PhoneInput::paintAdditionalPlaceholder(Painter &p, TimeMs ms) {
 	if (!_pattern.isEmpty()) {
-		auto t = getLastText();
+		auto t = getDisplayedText();
 		auto ph = _additionalPlaceholder.mid(t.size());
 		if (!ph.isEmpty()) {
 			p.setClipRect(rect());

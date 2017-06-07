@@ -22,6 +22,8 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 
 namespace HistoryLayout {
 
+int WideChatWidth();
+
 struct PaintContext {
 	PaintContext(TimeMs ms, const QRect &clip, TextSelection selection)
 		: ms(ms)
@@ -52,11 +54,6 @@ void paintEmpty(Painter &p, int width, int height);
 
 void serviceColorsUpdated();
 
-enum class BubbleTail {
-	None,
-	Left,
-	Right,
-};
-void paintBubble(Painter &p, QRect rect, int outerWidth, bool selected, bool outbg, BubbleTail tail);
+void paintBubble(Painter &p, QRect rect, int outerWidth, bool selected, bool outbg, RectPart tailSide);
 
 } // namespace HistoryLayout

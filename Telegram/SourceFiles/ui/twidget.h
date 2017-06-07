@@ -21,7 +21,59 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #pragma once
 
 namespace Fonts {
-	void start();
+
+void Start();
+QString GetOverride(const QString &familyName);
+
+} // namespace
+
+enum class RectPart {
+	None = 0,
+
+	TopLeft = (1 << 0),
+	Top = (1 << 1),
+	TopRight = (1 << 2),
+	Left = (1 << 3),
+	Center = (1 << 4),
+	Right = (1 << 5),
+	BottomLeft = (1 << 6),
+	Bottom = (1 << 7),
+	BottomRight = (1 << 8),
+
+	FullTop = TopLeft | Top | TopRight,
+	NoTopBottom = Left | Center | Right,
+	FullBottom = BottomLeft | Bottom | BottomRight,
+	NoTop = NoTopBottom | FullBottom,
+	NoBottom = FullTop | NoTopBottom,
+
+	FullLeft = TopLeft | Left | BottomLeft,
+	NoLeftRight = Top | Center | Bottom,
+	FullRight = TopRight | Right | BottomRight,
+	NoLeft = NoLeftRight | FullRight,
+	NoRight = FullLeft | NoLeftRight,
+
+	CornersMask = TopLeft | TopRight | BottomLeft | BottomRight,
+	SidesMask = Top | Bottom | Left | Right,
+
+	Full = FullTop | NoTop,
+};
+Q_DECLARE_FLAGS(RectParts, RectPart);
+Q_DECLARE_OPERATORS_FOR_FLAGS(RectParts);
+
+inline bool IsTopCorner(RectPart corner) {
+	return (corner == RectPart::TopLeft) || (corner == RectPart::TopRight);
+}
+
+inline bool IsBottomCorner(RectPart corner) {
+	return (corner == RectPart::BottomLeft) || (corner == RectPart::BottomRight);
+}
+
+inline bool IsLeftCorner(RectPart corner) {
+	return (corner == RectPart::TopLeft) || (corner == RectPart::BottomLeft);
+}
+
+inline bool IsRightCorner(RectPart corner) {
+	return (corner == RectPart::TopRight) || (corner == RectPart::BottomRight);
 }
 
 class Painter : public QPainter {
@@ -167,20 +219,33 @@ public:
 	QPoint myrtlpoint(int x, int y) const {
 		return rtlpoint(x, y, Base::width());
 	}
-	QPoint myrtlpoint(const QPoint p) const {
-		return rtlpoint(p, Base::width());
+	QPoint myrtlpoint(const QPoint point) const {
+		return rtlpoint(point, Base::width());
 	}
 	QRect myrtlrect(int x, int y, int w, int h) const {
 		return rtlrect(x, y, w, h, Base::width());
 	}
-	QRect myrtlrect(const QRect &r) const {
-		return rtlrect(r, Base::width());
+	QRect myrtlrect(const QRect &rect) const {
+		return rtlrect(rect, Base::width());
 	}
-	void rtlupdate(const QRect &r) {
-		Base::update(myrtlrect(r));
+	void rtlupdate(const QRect &rect) {
+		Base::update(myrtlrect(rect));
 	}
 	void rtlupdate(int x, int y, int w, int h) {
 		Base::update(myrtlrect(x, y, w, h));
+	}
+
+	QPoint mapFromGlobal(const QPoint &point) const {
+		return Base::mapFromGlobal(point);
+	}
+	QPoint mapToGlobal(const QPoint &point) const {
+		return Base::mapToGlobal(point);
+	}
+	QRect mapFromGlobal(const QRect &rect) const {
+		return QRect(mapFromGlobal(rect.topLeft()), rect.size());
+	}
+	QRect mapToGlobal(const QRect &rect) {
+		return QRect(mapToGlobal(rect.topLeft()), rect.size());
 	}
 
 protected:
@@ -328,28 +393,23 @@ void myEnsureResized(QWidget *target);
 QPixmap myGrab(TWidget *target, QRect rect = QRect(), QColor bg = QColor(255, 255, 255, 0));
 QImage myGrabImage(TWidget *target, QRect rect = QRect(), QColor bg = QColor(255, 255, 255, 0));
 
-class SingleDelayedCall : public QObject {
-	Q_OBJECT
-
+class SingleQueuedInvokation : public QObject {
 public:
-	SingleDelayedCall(QObject *parent, const char *member) : QObject(parent), _member(member) {
+	SingleQueuedInvokation(base::lambda<void()> callback) : _callback(callback) {
 	}
 	void call() {
-		if (_pending.testAndSetOrdered(0, 1)) {
-			QMetaObject::invokeMethod(this, "makeDelayedCall", Qt::QueuedConnection);
-		}
-	}
-
-private slots:
-	void makeDelayedCall() {
-		if (_pending.testAndSetOrdered(1, 0)) {
-			QMetaObject::invokeMethod(parent(), _member);
+		if (_pending.testAndSetAcquire(0, 1)) {
+			InvokeQueued(this, [this] {
+				if (_pending.testAndSetRelease(1, 0)) {
+					_callback();
+				}
+			});
 		}
 	}
 
 private:
+	base::lambda<void()> _callback;
 	QAtomicInt _pending = { 0 };
-	const char *_member;
 
 };
 

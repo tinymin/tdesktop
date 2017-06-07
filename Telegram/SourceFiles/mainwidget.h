@@ -23,6 +23,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "storage/localimageloader.h"
 #include "history/history_common.h"
 #include "core/single_timer.h"
+#include "base/weak_unique_ptr.h"
 
 namespace Notify {
 struct PeerUpdate;
@@ -37,12 +38,15 @@ namespace Player {
 class Widget;
 class VolumeWidget;
 class Panel;
+class Float;
 } // namespace Player
 } // namespace Media
 
 namespace Ui {
 class PlainShadow;
 class DropdownMenu;
+template <typename Widget>
+class WidgetSlideWrap;
 } // namespace Ui
 
 namespace Window {
@@ -51,11 +55,17 @@ class PlayerWrapWidget;
 class TopBarWidget;
 class SectionMemento;
 class SectionWidget;
+class AbstractSectionWidget;
 struct SectionSlideParams;
+enum class Column;
 } // namespace Window
 
+namespace Calls {
+class Call;
+class TopBar;
+} // namespace Calls
+
 class MainWindow;
-class ApiWrap;
 class ConfirmBox;
 class DialogsWidget;
 class HistoryWidget;
@@ -143,9 +153,9 @@ class MainWidget : public TWidget, public RPCSender, private base::Subscriber {
 	Q_OBJECT
 
 public:
-	MainWidget(QWidget *parent, std::unique_ptr<Window::Controller> controller);
+	MainWidget(QWidget *parent, gsl::not_null<Window::Controller*> controller);
 
-	bool needBackButton();
+	bool isSectionShown() const;
 
 	// Temporary methods, while top bar was not done inside HistoryWidget / OverviewWidget.
 	bool paintTopBar(Painter &, int decreaseWidth, TimeMs ms);
@@ -245,7 +255,7 @@ public:
 	void onShareContact(const PeerId &peer, UserData *contact);
 	bool onSendPaths(const PeerId &peer);
 	void onFilesOrForwardDrop(const PeerId &peer, const QMimeData *data);
-	bool selectingPeer(bool withConfirm = false);
+	bool selectingPeer(bool withConfirm = false) const;
 	bool selectingPeerForInlineSwitch();
 	void offerPeer(PeerId peer);
 	void dialogsActivate();
@@ -311,7 +321,6 @@ public:
 	void jumpToDate(PeerData *peer, const QDate &date);
 	void searchMessages(const QString &query, PeerData *inPeer);
 	bool preloadOverview(PeerData *peer, MediaOverviewType type);
-	void preloadOverviews(PeerData *peer);
 	void changingMsgId(HistoryItem *row, MsgId newId);
 	void itemEdited(HistoryItem *item);
 
@@ -334,7 +343,6 @@ public:
 	void checkChatBackground();
 	ImagePtr newBackgroundThumb();
 
-	ApiWrap *api();
 	void messageDataReceived(ChannelData *channel, MsgId msgId);
 	void updateBotKeyboard(History *h);
 
@@ -373,8 +381,6 @@ public:
 	void onSelfParticipantUpdated(ChannelData *channel);
 
 	bool contentOverlapped(const QRect &globalRect);
-
-	void rpcClear() override;
 
 	bool isItemVisible(HistoryItem *item);
 
@@ -444,10 +450,8 @@ public slots:
 	void onUpdateMuted();
 
 	void onStickersInstalled(uint64 setId);
-	void onFullPeerUpdated(PeerData *peer);
 
 	void onViewsIncrement();
-	void onActiveChannelUpdateFull();
 
 	void ui_showPeerHistoryAsync(quint64 peerId, qint32 showAtMsgId, Ui::ShowWay way);
 	void ui_autoplayMediaInlineAsync(qint32 channelId, qint32 msgId);
@@ -459,6 +463,40 @@ protected:
 	bool eventFilter(QObject *o, QEvent *e) override;
 
 private:
+	struct Float {
+		template <typename ToggleCallback, typename DraggedCallback>
+		Float(QWidget *parent, HistoryItem *item, ToggleCallback callback, DraggedCallback dragged);
+
+		bool hiddenByWidget = false;
+		bool hiddenByHistory = false;
+		bool visible = false;
+		RectPart animationSide;
+		Animation visibleAnimation;
+		Window::Column column;
+		RectPart corner;
+		QPoint dragFrom;
+		Animation draggedAnimation;
+		bool hiddenByDrag = false;
+		object_ptr<Media::Player::Float> widget;
+	};
+
+	using ChannelGetDifferenceTime = QMap<ChannelData*, TimeMs>;
+	enum class ChannelDifferenceRequest {
+		Unknown,
+		PtsGapOrShortPoll,
+		AfterFail,
+	};
+
+	struct DeleteHistoryRequest {
+		PeerData *peer;
+		bool justClearHistory;
+	};
+
+	struct DeleteAllFromUserParams {
+		ChannelData *channel;
+		UserData *from;
+	};
+
 	void animationCallback();
 	void handleAdaptiveLayoutUpdate();
 	void updateWindowAdaptiveLayout();
@@ -477,6 +515,11 @@ private:
 	void closeBothPlayers();
 	void playerHeightUpdated();
 
+	void setCurrentCall(Calls::Call *call);
+	void createCallTopBar();
+	void destroyCallTopBar();
+	void callTopBarHeightUpdated();
+
 	void sendReadRequest(PeerData *peer, MsgId upTo);
 	void channelReadDone(PeerData *peer, const MTPBool &result);
 	void historyReadDone(PeerData *peer, const MTPmessages_AffectedMessages &result);
@@ -487,9 +530,8 @@ private:
 	void overviewLoaded(History *history, const MTPmessages_Messages &result, mtpRequestId req);
 	void mediaOverviewUpdated(const Notify::PeerUpdate &update);
 
-	Window::SectionSlideParams prepareShowAnimation(bool willHaveTopBarShadow);
+	Window::SectionSlideParams prepareShowAnimation(bool willHaveTopBarShadow, bool willHaveTabbedSection);
 	void showNewWideSection(const Window::SectionMemento *memento, bool back, bool saveInStack);
-	bool isSectionShown() const;
 
 	// All this methods use the prepareShowAnimation().
 	Window::SectionSlideParams prepareWideSectionAnimation(Window::SectionWidget *section);
@@ -501,25 +543,6 @@ private:
 
 	void saveSectionInStack();
 
-	std::unique_ptr<Window::Controller> _controller;
-	bool _started = false;
-
-	SelectedItemSet _toForward;
-	Text _toForwardFrom, _toForwardText;
-	int32 _toForwardNameVersion = 0;
-	int _forwardingItemRemovedSubscription = 0;
-
-	OrderedSet<WebPageId> _webPagesUpdated;
-	OrderedSet<GameId> _gamesUpdated;
-	QTimer _webPageOrGameUpdater;
-
-	SingleTimer _updateMutedTimer;
-
-	enum class ChannelDifferenceRequest {
-		Unknown,
-		PtsGapOrShortPoll,
-		AfterFail,
-	};
 	void getChannelDifference(ChannelData *channel, ChannelDifferenceRequest from = ChannelDifferenceRequest::Unknown);
 	void gotDifference(const MTPupdates_Difference &diff);
 	bool failDifference(const RPCError &e);
@@ -533,15 +556,7 @@ private:
 	void feedUpdateVector(const MTPVector<MTPUpdate> &updates, bool skipMessageIds = false);
 	void feedMessageIds(const MTPVector<MTPUpdate> &updates);
 
-	struct DeleteHistoryRequest {
-		PeerData *peer;
-		bool justClearHistory;
-	};
 	void deleteHistoryPart(DeleteHistoryRequest request, const MTPmessages_AffectedHistory &result);
-	struct DeleteAllFromUserParams {
-		ChannelData *channel;
-		UserData *from;
-	};
 	void deleteAllFromUserPart(DeleteAllFromUserParams params, const MTPmessages_AffectedHistory &result);
 
 	void updateReceived(const mtpPrime *from, const mtpPrime *end);
@@ -552,9 +567,10 @@ private:
 
 	void inviteCheckDone(QString hash, const MTPChatInvite &invite);
 	bool inviteCheckFail(const RPCError &error);
-	QString _inviteHash;
 	void inviteImportDone(const MTPUpdates &result);
 	bool inviteImportFail(const RPCError &error);
+
+	int getSectionTop() const;
 
 	void hideAll();
 	void showAll();
@@ -563,6 +579,48 @@ private:
 	bool overviewFailed(PeerData *data, const RPCError &error, mtpRequestId req);
 
 	void clearCachedBackground();
+	void checkCurrentFloatPlayer();
+	void toggleFloatPlayer(gsl::not_null<Float*> instance);
+	void checkFloatPlayerVisibility();
+	void updateFloatPlayerPosition(gsl::not_null<Float*> instance);
+	void removeFloatPlayer(gsl::not_null<Float*> instance);
+	Float *currentFloatPlayer() const {
+		return _playerFloats.empty() ? nullptr : _playerFloats.back().get();
+	}
+	Window::AbstractSectionWidget *getFloatPlayerSection(gsl::not_null<Window::Column*> column) const;
+	void finishFloatPlayerDrag(gsl::not_null<Float*> instance, bool closed);
+	void updateFloatPlayerColumnCorner(QPoint center);
+	QPoint getFloatPlayerPosition(gsl::not_null<Float*> instance) const;
+	QPoint getFloatPlayerHiddenPosition(QPoint position, QSize size, RectPart side) const;
+	RectPart getFloatPlayerSide(QPoint center) const;
+
+	bool ptsUpdated(int32 pts, int32 ptsCount);
+	bool ptsUpdated(int32 pts, int32 ptsCount, const MTPUpdates &updates);
+	bool ptsUpdated(int32 pts, int32 ptsCount, const MTPUpdate &update);
+	void ptsApplySkippedUpdates();
+	bool requestingDifference() const {
+		return _ptsWaiter.requesting();
+	}
+	bool getDifferenceTimeChanged(ChannelData *channel, int32 ms, ChannelGetDifferenceTime &channelCurTime, TimeMs &curTime);
+
+	void viewsIncrementDone(QVector<MTPint> ids, const MTPVector<MTPint> &result, mtpRequestId req);
+	bool viewsIncrementFail(const RPCError &error, mtpRequestId req);
+
+	gsl::not_null<Window::Controller*> _controller;
+	bool _started = false;
+
+	SelectedItemSet _toForward;
+	Text _toForwardFrom, _toForwardText;
+	int32 _toForwardNameVersion = 0;
+	int _forwardingItemRemovedSubscription = 0;
+
+	OrderedSet<WebPageId> _webPagesUpdated;
+	OrderedSet<GameId> _gamesUpdated;
+	QTimer _webPageOrGameUpdater;
+
+	SingleTimer _updateMutedTimer;
+
+	QString _inviteHash;
 
 	Animation _a_show;
 	bool _showBack = false;
@@ -576,13 +634,18 @@ private:
 	object_ptr<DialogsWidget> _dialogs;
 	object_ptr<HistoryWidget> _history;
 	object_ptr<Window::SectionWidget> _wideSection = { nullptr };
+	object_ptr<Window::SectionWidget> _thirdSection = { nullptr };
 	object_ptr<OverviewWidget> _overview = { nullptr };
+
+	base::weak_unique_ptr<Calls::Call> _currentCall;
+	object_ptr<Ui::WidgetSlideWrap<Calls::TopBar>> _callTopBar = { nullptr };
 
 	object_ptr<Window::PlayerWrapWidget> _player = { nullptr };
 	object_ptr<Media::Player::VolumeWidget> _playerVolume = { nullptr };
 	object_ptr<Media::Player::Panel> _playerPlaylist;
 	object_ptr<Media::Player::Panel> _playerPanel;
 	bool _playerUsingPanel = false;
+	std::vector<std::unique_ptr<Float>> _playerFloats;
 
 	QPointer<ConfirmBox> _forwardConfirm; // for single column layout
 	object_ptr<HistoryHider> _hider = { nullptr };
@@ -591,6 +654,7 @@ private:
 	MsgId _msgIdInStack = 0;
 
 	int _playerHeight = 0;
+	int _callTopBarHeight = 0;
 	int _contentScrollAddToY = 0;
 
 	int32 updDate = 0;
@@ -598,21 +662,11 @@ private:
 	int32 updSeq = 0;
 	SingleTimer noUpdatesTimer;
 
-	bool ptsUpdated(int32 pts, int32 ptsCount);
-	bool ptsUpdated(int32 pts, int32 ptsCount, const MTPUpdates &updates);
-	bool ptsUpdated(int32 pts, int32 ptsCount, const MTPUpdate &update);
-	void ptsApplySkippedUpdates();
 	PtsWaiter _ptsWaiter;
-	bool requestingDifference() const {
-		return _ptsWaiter.requesting();
-	}
 
-	typedef QMap<ChannelData*, TimeMs> ChannelGetDifferenceTime;
 	ChannelGetDifferenceTime _channelGetDifferenceTimeByPts, _channelGetDifferenceTimeAfterFail;
 	TimeMs _getDifferenceTimeByPts = 0;
 	TimeMs _getDifferenceTimeAfterFail = 0;
-
-	bool getDifferenceTimeChanged(ChannelData *channel, int32 ms, ChannelGetDifferenceTime &channelCurTime, TimeMs &curTime);
 
 	SingleTimer _byPtsTimer;
 
@@ -665,12 +719,8 @@ private:
 	typedef QMap<mtpRequestId, PeerData*> ViewsIncrementByRequest;
 	ViewsIncrementByRequest _viewsIncrementByRequest;
 	SingleTimer _viewsIncrementTimer;
-	void viewsIncrementDone(QVector<MTPint> ids, const MTPVector<MTPint> &result, mtpRequestId req);
-	bool viewsIncrementFail(const RPCError &error, mtpRequestId req);
 
 	std::unique_ptr<App::WallPaper> _background;
-
-	std::unique_ptr<ApiWrap> _api;
 
 	bool _resizingSide = false;
 	int _resizingSideShift = 0;

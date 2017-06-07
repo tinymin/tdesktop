@@ -23,7 +23,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "mainwidget.h"
 #include "storage/localstorage.h"
 #include "platform/platform_specific.h"
-#include "messenger.h"
+#include "auth_session.h"
 
 namespace Images {
 namespace {
@@ -60,9 +60,11 @@ const QPixmap &circleMask(int width, int height) {
 } // namespace
 
 QImage prepareBlur(QImage img) {
-	QImage::Format fmt = img.format();
+	auto ratio = img.devicePixelRatio();
+	auto fmt = img.format();
 	if (fmt != QImage::Format_RGB32 && fmt != QImage::Format_ARGB32_Premultiplied) {
 		img = img.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+		img.setDevicePixelRatio(ratio);
 		t_assert(!img.isNull());
 	}
 
@@ -85,8 +87,9 @@ QImage prepareBlur(QImage img) {
 					p.fillRect(0, 0, w, h, Qt::transparent);
 					p.drawImage(QRect(radius, radius, w - 2 * radius, h - 2 * radius), img, QRect(0, 0, w, h));
 				}
-				QImage was = img;
-				img = imgsmall;
+				imgsmall.setDevicePixelRatio(ratio);
+				auto was = img;
+				img = std::move(imgsmall);
 				imgsmall = QImage();
 				t_assert(!img.isNull());
 
@@ -191,6 +194,9 @@ void prepareCircle(QImage &img) {
 void prepareRound(QImage &image, ImageRoundRadius radius, ImageRoundCorners corners) {
 	if (!static_cast<int>(corners)) {
 		return;
+	} else if (radius == ImageRoundRadius::Ellipse) {
+		t_assert(corners == ImageRoundCorners(ImageRoundCorner::All));
+		prepareCircle(image);
 	}
 	t_assert(!image.isNull());
 
@@ -290,7 +296,7 @@ QImage prepareOpaque(QImage image) {
 QImage prepare(QImage img, int w, int h, Images::Options options, int outerw, int outerh) {
 	t_assert(!img.isNull());
 	if (options.testFlag(Images::Option::Blurred)) {
-		img = prepareBlur(img);
+		img = prepareBlur(std::move(img));
 		t_assert(!img.isNull());
 	}
 	if (w <= 0 || (w == img.width() && (h <= 0 || h == img.height()))) {
@@ -468,6 +474,8 @@ const QPixmap &Image::pixRounded(int32 w, int32 h, ImageRoundRadius radius, Imag
 		options |= Images::Option::RoundedLarge | cornerOptions(corners);
 	} else if (radius == ImageRoundRadius::Small) {
 		options |= Images::Option::RoundedSmall | cornerOptions(corners);
+	} else if (radius == ImageRoundRadius::Ellipse) {
+		options |= Images::Option::Circled | cornerOptions(corners);
 	}
 	auto k = PixKey(w, h, options);
 	auto i = _sizesCache.constFind(k);
@@ -618,6 +626,8 @@ const QPixmap &Image::pixSingle(int32 w, int32 h, int32 outerw, int32 outerh, Im
 		options |= Images::Option::RoundedLarge | cornerOptions(corners);
 	} else if (radius == ImageRoundRadius::Small) {
 		options |= Images::Option::RoundedSmall | cornerOptions(corners);
+	} else if (radius == ImageRoundRadius::Ellipse) {
+		options |= Images::Option::Circled | cornerOptions(corners);
 	}
 
 	auto k = SinglePixKey(options);
@@ -657,6 +667,8 @@ const QPixmap &Image::pixBlurredSingle(int w, int h, int32 outerw, int32 outerh,
 		options |= Images::Option::RoundedLarge | cornerOptions(corners);
 	} else if (radius == ImageRoundRadius::Small) {
 		options |= Images::Option::RoundedSmall | cornerOptions(corners);
+	} else if (radius == ImageRoundRadius::Ellipse) {
+		options |= Images::Option::Circled | cornerOptions(corners);
 	}
 
 	auto k = SinglePixKey(options);
@@ -743,7 +755,7 @@ QPixmap Image::pixBlurredColoredNoCache(style::color add, int32 w, int32 h) cons
 	restore();
 	if (_data.isNull()) return blank()->pix();
 
-	QImage img = Images::prepareBlur(_data.toImage());
+	auto img = Images::prepareBlur(_data.toImage());
 	if (h <= 0) {
 		img = img.scaledToWidth(w, Qt::SmoothTransformation);
 	} else {
@@ -858,7 +870,7 @@ void RemoteImage::doCheckload() const {
 void RemoteImage::destroyLoaderDelayed(FileLoader *newValue) const {
 	_loader->stop();
 	auto loader = std::unique_ptr<FileLoader>(std::exchange(_loader, newValue));
-	Messenger::Instance().delayedDestroyLoader(std::move(loader));
+	AuthSession::Current().downloader().delayedDestroyLoader(std::move(loader));
 }
 
 void RemoteImage::loadLocal() {
@@ -959,7 +971,7 @@ void RemoteImage::cancel() {
 	auto loader = std::exchange(_loader, CancelledFileLoader);
 	loader->cancel();
 	loader->stop();
-	Messenger::Instance().delayedDestroyLoader(std::unique_ptr<FileLoader>(loader));
+	AuthSession::Current().downloader().delayedDestroyLoader(std::unique_ptr<FileLoader>(loader));
 }
 
 float64 RemoteImage::progress() const {

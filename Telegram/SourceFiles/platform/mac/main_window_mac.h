@@ -22,6 +22,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 
 #include "platform/platform_main_window.h"
 #include "platform/mac/specific_mac_p.h"
+#include "base/timer.h"
 
 namespace Platform {
 
@@ -33,7 +34,6 @@ public:
 
 	void psFirstShow();
 	void psInitSysMenu();
-	void psUpdateSysMenu(Qt::WindowState state);
 	void psUpdateMargins();
 
 	void psRefreshTaskbarIcon() {
@@ -46,9 +46,6 @@ public:
 	int getCustomTitleHeight() const {
 		return _customTitleHeight;
 	}
-
-	// It is placed here while the window handles activeSpaceDidChange event.
-	void customNotificationCreated(QWidget *notification);
 
 	~MainWindow();
 
@@ -65,14 +62,12 @@ public slots:
 	void psMacDelete();
 	void psMacSelectAll();
 
-private slots:
-	void onHideAfterFullScreen();
-
 protected:
 	bool eventFilter(QObject *obj, QEvent *evt) override;
 
 	void stateChangedHook(Qt::WindowState state) override;
 	void initHook() override;
+	void updateWindowIcon() override;
 	void titleVisibilityChangedHook() override;
 	void unreadCounterChangedHook() override;
 
@@ -87,8 +82,6 @@ protected:
 
 	QSystemTrayIcon *trayIcon = nullptr;
 	QMenu *trayIconMenu = nullptr;
-	QImage icon256, iconbig256;
-	QIcon wndIcon;
 
 	QImage trayImg, trayImgSel;
 
@@ -106,20 +99,13 @@ private:
 	void updateTitleCounter();
 	void updateIconCounters();
 
-	class CustomNotificationHandle;
-	friend class CustomNotificationHandle;
-	void customNotificationDestroyed(CustomNotificationHandle *handle);
-	void activateCustomNotifications();
-
 	friend class Private;
 	std::unique_ptr<Private> _private;
-
-	std::set<CustomNotificationHandle*> _customNotifications;
 
 	mutable bool psIdle;
 	mutable QTimer psIdleTimer;
 
-	QTimer _hideAfterFullScreenTimer;
+	base::Timer _hideAfterFullScreenTimer;
 
 	QMenuBar psMainMenu;
 	QAction *psLogout = nullptr;

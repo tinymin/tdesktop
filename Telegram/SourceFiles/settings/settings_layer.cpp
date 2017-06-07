@@ -31,7 +31,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #include "mainwindow.h"
 #include "mainwidget.h"
 #include "storage/localstorage.h"
-#include "boxes/confirmbox.h"
+#include "boxes/confirm_box.h"
 #include "application.h"
 #include "core/file_utilities.h"
 #include "window/themes/window_theme.h"
@@ -89,9 +89,9 @@ void Layer::paintEvent(QPaintEvent *e) {
 		auto paintTopRounded = clip.intersects(QRect(0, 0, width(), st::boxRadius));
 		auto paintBottomRounded = clip.intersects(QRect(0, height() - st::boxRadius, width(), st::boxRadius));
 		if (paintTopRounded || paintBottomRounded) {
-			auto parts = qFlags(App::RectPart::None);
-			if (paintTopRounded) parts |= App::RectPart::TopFull;
-			if (paintBottomRounded) parts |= App::RectPart::BottomFull;
+			auto parts = qFlags(RectPart::None);
+			if (paintTopRounded) parts |= RectPart::FullTop;
+			if (paintBottomRounded) parts |= RectPart::FullBottom;
 			App::roundRect(p, rect(), st::boxBg, BoxCorners, nullptr, parts);
 		}
 		auto other = clip.intersected(QRect(0, st::boxRadius, width(), height() - 2 * st::boxRadius));

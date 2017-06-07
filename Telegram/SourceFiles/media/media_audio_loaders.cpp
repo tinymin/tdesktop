@@ -27,45 +27,51 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 namespace Media {
 namespace Player {
 
-Loaders::Loaders(QThread *thread) : _fromVideoNotify(this, "onVideoSoundAdded") {
+Loaders::Loaders(QThread *thread) : _fromVideoNotify([this] { videoSoundAdded(); }) {
 	moveToThread(thread);
+	_fromVideoNotify.moveToThread(thread);
 	connect(thread, SIGNAL(started()), this, SLOT(onInit()));
 	connect(thread, SIGNAL(finished()), this, SLOT(deleteLater()));
 }
 
 void Loaders::feedFromVideo(VideoSoundPart &&part) {
-	bool invoke = false;
+	auto invoke = false;
 	{
 		QMutexLocker lock(&_fromVideoMutex);
-		if (_fromVideoPlayId == part.videoPlayId) {
-			_fromVideoQueue.enqueue(FFMpeg::dataWrapFromPacket(*part.packet));
-			invoke = true;
-		} else {
-			FFMpeg::freePacket(part.packet);
-		}
+		_fromVideoQueues[part.audio].enqueue(FFMpeg::dataWrapFromPacket(*part.packet));
+		invoke = true;
 	}
 	if (invoke) {
 		_fromVideoNotify.call();
 	}
 }
 
-void Loaders::startFromVideo(uint64 videoPlayId) {
-	QMutexLocker lock(&_fromVideoMutex);
-	_fromVideoPlayId = videoPlayId;
-	clearFromVideoQueue();
-}
-
-void Loaders::stopFromVideo() {
-	startFromVideo(0);
-}
-
-void Loaders::onVideoSoundAdded() {
-	bool waitingAndAdded = false;
+void Loaders::videoSoundAdded() {
+	auto waitingAndAdded = false;
+	auto queues = decltype(_fromVideoQueues)();
 	{
 		QMutexLocker lock(&_fromVideoMutex);
-		if (_videoLoader && _videoLoader->playId() == _fromVideoPlayId && !_fromVideoQueue.isEmpty()) {
-			_videoLoader->enqueuePackets(_fromVideoQueue);
-			waitingAndAdded = _videoLoader->holdsSavedDecodedSamples();
+		queues = base::take(_fromVideoQueues);
+	}
+	auto tryLoader = [this](auto &audio, auto &loader, auto &it) {
+		if (audio == it.key() && loader) {
+			loader->enqueuePackets(it.value());
+			if (loader->holdsSavedDecodedSamples()) {
+				onLoad(audio);
+			}
+			return true;
+		}
+		return false;
+	};
+	for (auto i = queues.begin(), e = queues.end(); i != e; ++i) {
+		if (!tryLoader(_audio, _audioLoader, i)
+			&& !tryLoader(_song, _songLoader, i)
+			&& !tryLoader(_video, _videoLoader, i)) {
+			for (auto &packetData : i.value()) {
+				AVPacket packet;
+				FFMpeg::packetFromDataWrap(packet, packetData);
+				FFMpeg::freePacket(&packet);
+			}
 		}
 	}
 	if (waitingAndAdded) {
@@ -79,11 +85,13 @@ Loaders::~Loaders() {
 }
 
 void Loaders::clearFromVideoQueue() {
-	auto queue = base::take(_fromVideoQueue);
-	for (auto &packetData : queue) {
-		AVPacket packet;
-		FFMpeg::packetFromDataWrap(packet, packetData);
-		FFMpeg::freePacket(&packet);
+	auto queues = base::take(_fromVideoQueues);
+	for (auto &queue : queues) {
+		for (auto &packetData : queue) {
+			AVPacket packet;
+			FFMpeg::packetFromDataWrap(packet, packetData);
+			FFMpeg::freePacket(&packet);
+		}
 	}
 }
 
@@ -117,8 +125,7 @@ AudioMsgId Loaders::clear(AudioMsgId::Type type) {
 }
 
 void Loaders::setStoppedState(Mixer::Track *track, State state) {
-	track->state.state = state;
-	track->state.position = 0;
+	mixer()->setStoppedState(track, state);
 }
 
 void Loaders::emitError(AudioMsgId::Type type) {
@@ -194,7 +201,7 @@ void Loaders::loadData(AudioMsgId audio, qint64 position) {
 	}
 
 	if (started) {
-		mixer()->reattachTracks();
+		Audio::AttachToDevice();
 
 		track->started();
 		if (!internal::audioCheckError()) {
@@ -208,7 +215,7 @@ void Loaders::loadData(AudioMsgId audio, qint64 position) {
 		track->fadeStartPosition = position;
 
 		track->format = l->format();
-		track->frequency = l->frequency();
+		track->frequency = l->samplesFrequency();
 	}
 	if (samplesCount) {
 		track->ensureStreamCreated();
@@ -247,7 +254,7 @@ void Loaders::loadData(AudioMsgId audio, qint64 position) {
 
 	if (finished) {
 		track->loaded = true;
-		track->state.duration = track->bufferedPosition + track->bufferedLength;
+		track->state.length = track->bufferedPosition + track->bufferedLength;
 		clear(type);
 	}
 
@@ -315,34 +322,34 @@ AudioPlayerLoader *Loaders::setupLoader(const AudioMsgId &audio, SetupError &err
 		switch (audio.type()) {
 		case AudioMsgId::Type::Voice: _audio = audio; loader = &_audioLoader; break;
 		case AudioMsgId::Type::Song: _song = audio; loader = &_songLoader; break;
-		case AudioMsgId::Type::Video: _video = audio; break;
+		case AudioMsgId::Type::Video: _video = audio; loader = &_videoLoader; break;
 		}
 
-		if (audio.type() == AudioMsgId::Type::Video) {
+		if (audio.playId()) {
 			if (!track->videoData) {
+				clear(audio.type());
 				track->state.state = State::StoppedAtError;
 				emit error(audio);
 				LOG(("Audio Error: video sound data not ready"));
 				return nullptr;
 			}
-			_videoLoader = std::make_unique<ChildFFMpegLoader>(track->videoPlayId, std::move(track->videoData));
-			l = _videoLoader.get();
+			*loader = std::make_unique<ChildFFMpegLoader>(std::move(track->videoData));
 		} else {
-			*loader = std::make_unique<FFMpegLoader>(track->file, track->data);
-			l = loader->get();
+			*loader = std::make_unique<FFMpegLoader>(track->file, track->data, base::byte_vector());
 		}
+		l = loader->get();
 
 		if (!l->open(position)) {
 			track->state.state = State::StoppedAtStart;
 			return nullptr;
 		}
-		int64 duration = l->duration();
-		if (duration <= 0) {
+		auto length = l->samplesCount();
+		if (length <= 0) {
 			track->state.state = State::StoppedAtStart;
 			return nullptr;
 		}
-		track->state.duration = duration;
-		track->state.frequency = l->frequency();
+		track->state.length = length;
+		track->state.frequency = l->samplesFrequency();
 		if (!track->state.frequency) track->state.frequency = kDefaultFrequency;
 		err = SetupNoErrorStarted;
 	} else if (track->loaded) {

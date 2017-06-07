@@ -22,7 +22,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 
 #include "styles/style_overview.h"
 #include "styles/style_history.h"
-#include "styles/style_stickers.h"
+#include "styles/style_chat_helpers.h"
 #include "styles/style_widgets.h"
 #include "inline_bots/inline_bot_result.h"
 #include "media/media_audio.h"
@@ -139,7 +139,7 @@ void Gif::paint(Painter &p, const QRect &clip, const PaintContext *context) cons
 	bool loaded = document->loaded(), loading = document->loading(), displayLoading = document->displayLoading();
 	if (loaded && !_gif && !_gif.isBad()) {
 		auto that = const_cast<Gif*>(this);
-		that->_gif = Media::Clip::MakeReader(document->location(), document->data(), [that](Media::Clip::Notification notification) {
+		that->_gif = Media::Clip::MakeReader(document, FullMsgId(), [that](Media::Clip::Notification notification) {
 			that->clipCallback(notification);
 		});
 		if (_gif) _gif->setAutoplay();
@@ -338,8 +338,8 @@ void Gif::clipCallback(Media::Clip::Notification notification) {
 				_gif.setBad();
 				getShownDocument()->forget();
 			} else if (_gif->ready() && !_gif->started()) {
-				int32 height = st::inlineMediaHeight;
-				QSize frame = countFrameSize();
+				auto height = st::inlineMediaHeight;
+				auto frame = countFrameSize();
 				_gif->start(frame.width(), frame.height(), _width, height, ImageRoundRadius::None, ImageRoundCorner::None);
 			} else if (_gif->autoPausedGif() && !context()->inlineItemVisible(this)) {
 				_gif.reset();
@@ -836,17 +836,17 @@ bool File::updateStatusText() const {
 		if (document->voice()) {
 			statusSize = FileStatusSizeLoaded;
 			auto state = Media::Player::mixer()->currentState(AudioMsgId::Type::Voice);
-			if (state.id == AudioMsgId(document, FullMsgId()) && !Media::Player::IsStopped(state.state) && state.state != State::Finishing) {
+			if (state.id == AudioMsgId(document, FullMsgId()) && !Media::Player::IsStoppedOrStopping(state.state)) {
 				statusSize = -1 - (state.position / state.frequency);
-				realDuration = (state.duration / state.frequency);
+				realDuration = (state.length / state.frequency);
 				showPause = (state.state == State::Playing || state.state == State::Resuming || state.state == State::Starting);
 			}
 		} else if (document->song()) {
 			statusSize = FileStatusSizeLoaded;
 			auto state = Media::Player::mixer()->currentState(AudioMsgId::Type::Song);
-			if (state.id == AudioMsgId(document, FullMsgId()) && !Media::Player::IsStopped(state.state) && state.state != State::Finishing) {
+			if (state.id == AudioMsgId(document, FullMsgId()) && !Media::Player::IsStoppedOrStopping(state.state)) {
 				statusSize = -1 - (state.position / state.frequency);
-				realDuration = (state.duration / state.frequency);
+				realDuration = (state.length / state.frequency);
 				showPause = (state.state == State::Playing || state.state == State::Resuming || state.state == State::Starting);
 			}
 			if (!showPause && (state.id == AudioMsgId(document, FullMsgId())) && Media::Player::instance()->isSeeking(AudioMsgId::Type::Song)) {
@@ -1191,7 +1191,7 @@ void Game::paint(Painter &p, const QRect &clip, const PaintContext *context) con
 		bool loaded = document->loaded(), loading = document->loading(), displayLoading = document->displayLoading();
 		if (loaded && !_gif && !_gif.isBad()) {
 			auto that = const_cast<Game*>(this);
-			that->_gif = Media::Clip::MakeReader(document->location(), document->data(), [that](Media::Clip::Notification notification) {
+			that->_gif = Media::Clip::MakeReader(document, FullMsgId(), [that](Media::Clip::Notification notification) {
 				that->clipCallback(notification);
 			});
 			if (_gif) _gif->setAutoplay();
